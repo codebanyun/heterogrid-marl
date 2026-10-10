@@ -1,0 +1,18 @@
+{
+  "map_size": [6, 6, 3],
+  "red": [
+    {"role": "scout", "platform": "uav"},
+    {"role": "strike", "platform": "robot"},
+    {"role": "hybrid", "platform": "robot_dog"}
+  ],
+  "blue": [
+    {"role": "scout", "platform": "uav"},
+    {"role": "strike", "platform": "robot"},
+    {"role": "hybrid", "platform": "robot_dog"}
+  ],
+  "max_steps": 100,
+  "opponent": "static",
+  "communication": "full",
+  "target_sharing": "auto",
+  "timeout_as_loss": true
+}

@@ -47,18 +47,19 @@ class ViewerTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         base = f"http://127.0.0.1:{server.server_port}"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
-            with urllib.request.urlopen(base + "/") as response:
+            with opener.open(base + "/", timeout=5) as response:
                 self.assertIn("三维战场", response.read().decode("utf-8"))
-            with urllib.request.urlopen(base + "/api/state") as response:
+            with opener.open(base + "/api/state", timeout=5) as response:
                 self.assertEqual(json.load(response)["frame"]["step"], 0)
             request = urllib.request.Request(base + "/api/control", data=b'{"action":"step"}',
                                              headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(request) as response:
+            with opener.open(request, timeout=5) as response:
                 self.assertEqual(json.load(response)["frame"]["step"], 1)
             request.add_header("Origin", "http://unrelated.invalid")
             with self.assertRaises(urllib.error.HTTPError) as result:
-                urllib.request.urlopen(request)
+                opener.open(request, timeout=5)
             self.assertEqual(result.exception.code, 403)
         finally:
             server.shutdown()

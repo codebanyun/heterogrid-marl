@@ -1,0 +1,9 @@
+{
+  "map_size": [24, 24, 6],
+  "max_steps": 200,
+  "opponent": "rule",
+  "communication": "distance",
+  "comm_radius": 10.0,
+  "target_sharing": "auto",
+  "scripted_target_sharing": false
+}

@@ -1,4 +1,4 @@
-"""Local environment throughput only; no neural-network training or rendering."""
+"""Measure environment throughput only, without neural-network training or rendering."""
 import argparse
 import json
 import time

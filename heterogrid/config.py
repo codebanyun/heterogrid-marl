@@ -72,6 +72,11 @@ class EnvConfig:
     win_reward: float = 10.0
     loss_reward: float = -10.0
     timeout_as_loss: bool = False
+    time_penalty: float = 0.0
+    discovery_reward: float = 0.0
+    sharing_reward: float = 0.0
+    information_reward_cap: float = 1.0
+    scripted_target_sharing: bool = True
 
     def __post_init__(self):
         if len(self.map_size) != 3 or any(type(n) is not int or not 1 <= n < 2**31 for n in self.map_size):
@@ -102,6 +107,12 @@ class EnvConfig:
             raise ValueError("Damage/kill/win rewards must be >= 0 and loss_reward <= 0")
         if type(self.timeout_as_loss) is not bool:
             raise ValueError("timeout_as_loss must be a boolean")
+        if type(self.scripted_target_sharing) is not bool:
+            raise ValueError("scripted_target_sharing must be a boolean")
+        for name in ("time_penalty", "discovery_reward", "sharing_reward", "information_reward_cap"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

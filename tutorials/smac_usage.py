@@ -1,4 +1,4 @@
-"""Minimal fixed-slot SMAC-style rollout."""
+"""Fixed-slot SMAC-style rollout without an external algorithm dependency."""
 import numpy as np
 
 from heterogrid import SMACAdapter

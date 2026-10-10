@@ -1,4 +1,4 @@
-"""Minimal algorithm-neutral PettingZoo usage; replace the action sampler with your actor."""
+"""Algorithm-neutral PettingZoo usage; replace the action sampler with your actor."""
 import numpy as np
 
 from heterogrid import parallel_env

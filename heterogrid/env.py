@@ -87,9 +87,6 @@ class HeteroGridParallelEnv(ParallelEnv):
                 self.action_space(name).seed(seed + i)
                 self.observation_space(name).seed(seed + i)
         self.opponent_policy.reset(seed=seed)
-        if self.config.target_sharing == "auto":
-            self.core.share_visible_targets("red")
-            self.core.share_visible_targets("blue")
         self.frames = [self.core.snapshot()] if self.record_replay else []
         self._last_observations, self._last_infos = self._observe(self.agents)
         return self._last_observations, self._last_infos
@@ -124,7 +121,8 @@ class HeteroGridParallelEnv(ParallelEnv):
             raise ValueError("step() requires exactly one action for each current env.agents entry")
         # A scripted opponent may use the same legal one-hop reports as the red baseline.
         # Pretrained opponents get these reports only in explicit auto-sharing mode.
-        if self.config.opponent in ("static", "random", "rule"):
+        if (self.config.opponent in ("static", "random", "rule") and
+                self.config.scripted_target_sharing and self.config.target_sharing == "manual"):
             self.core.share_visible_targets("blue")
         blue = [n for n in self.core.names["blue"] if self.core.units[n].alive]
         blue_obs, blue_info = self._observe(blue)
@@ -137,9 +135,6 @@ class HeteroGridParallelEnv(ParallelEnv):
         truncations = {n: bool(timed_out and not terminations[n]) for n in acting}
         team_rewards = {n: float(rewards["red"]) for n in acting}
         self.agents = [n for n in acting if not terminations[n] and not truncations[n]]
-        if self.config.target_sharing == "auto" and not self.core.finished:
-            self.core.share_visible_targets("red")
-            self.core.share_visible_targets("blue")
         # Final observations are returned for agents that died/terminated on this step.
         observations, infos = self._observe(acting)
         for name in metrics["invalid_actions"]:

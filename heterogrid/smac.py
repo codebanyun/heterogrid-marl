@@ -44,7 +44,9 @@ class SMACAdapter:
                 "termination_reason": core.reason, "episode_limit": core.reason == "timeout",
                 "dead_allies": sum(not core.units[n].alive for n in core.names["red"]),
                 "dead_enemies": sum(not core.units[n].alive for n in core.names["blue"]),
-                "invalid_actions": core.last_metrics["invalid_actions"]}
+                "invalid_actions": core.last_metrics["invalid_actions"],
+                "reward_components": dict(core.last_metrics["reward_components"]["red"]),
+                "episode_metrics": dict(core.episode_metrics["red"])}
         if done:
             self._stats["battles_game"] += 1
             self._stats["battles_won"] += int(core.winner == "red")

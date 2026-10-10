@@ -16,6 +16,7 @@ MOVES = np.asarray([(0, 0, 0), (1, 0, 0), (-1, 0, 0),
 SELF_FEATURES = 12
 ALLY_FEATURES = 8
 TARGET_FEATURES = 11
+REWARD_COMPONENTS = ("damage", "kill", "terminal", "time", "discovery", "sharing")
 
 
 @dataclass
@@ -59,6 +60,7 @@ class GridCombat:
         self.inboxes: dict[str, dict[str, tuple[np.ndarray, int]]] = {}
         self.online: dict[str, bool] = {}
         self.last_metrics: dict[str, Any] = {}
+        self.episode_metrics: dict[str, dict] = {}
 
     @staticmethod
     def enemy_team(team: str):
@@ -94,10 +96,19 @@ class GridCombat:
         self.last_deliveries = []
         self.episode_returns = {"red": 0.0, "blue": 0.0}
         self.last_metrics = {}
+        self.episode_metrics = {t: {"first_contact_step": None, "discovered_targets": 0,
+                                  "useful_reports": 0, "damage": 0.0, "kills": 0,
+                                  "information_reward": 0.0} for t in self.names}
+        self._discovered = {t: set() for t in self.names}
+        self._rewarded_reports = {t: set() for t in self.names}
+        self._pending_information = {t: {"discovery": 0, "sharing": 0} for t in self.names}
         self.tracks = {name: {} for name in self.all_names}
         self.inboxes = {name: {} for name in self.all_names}
         self._sample_network()
-        self._refresh_perception()
+        self._refresh_perception(reward_discoveries=False)
+        if self.config.target_sharing == "auto":
+            for team in self.names:
+                self.share_visible_targets(team, reward_reports=False)
 
     def _sample_network(self):
         # A random node outage applies to both send and receive, for one decision tick.
@@ -119,7 +130,7 @@ class GridCombat:
         a, b = self.units[observer], self.units[target]
         return a.alive and b.alive and np.linalg.norm(a.position - b.position) <= a.stats.vision
 
-    def _refresh_perception(self):
+    def _refresh_perception(self, reward_discoveries=True):
         for name, unit in self.units.items():
             self.tracks[name] = {n: track for n, track in self.tracks[name].items()
                                  if self.step_count - track.seen_at <= self.config.target_ttl}
@@ -135,8 +146,17 @@ class GridCombat:
                 if np.linalg.norm(unit.position - target.position) <= unit.stats.vision:
                     self.tracks[name][target_name] = Track(target.position.copy(), target.hp,
                                                          target.spec.role, self.step_count)
+                    if target.alive and target_name not in self._discovered[unit.team]:
+                        self._discovered[unit.team].add(target_name)
+                        metrics = self.episode_metrics[unit.team]
+                        metrics["discovered_targets"] += 1
+                        if metrics["first_contact_step"] is None:
+                            metrics["first_contact_step"] = self.step_count
+                        if reward_discoveries:
+                            self._pending_information[unit.team]["discovery"] += 1
 
-    def exchange_messages(self, messages: dict[str, dict], allowed_senders: set[str] | None = None):
+    def exchange_messages(self, messages: dict[str, dict], allowed_senders: set[str] | None = None,
+                          *, reward_reports=True):
         """Deliver one-hop messages at the current tick, without advancing physics.
 
         Payload: {sender: {content: [-1..1]*message_dim, targets: [enemy IDs],
@@ -172,6 +192,7 @@ class GridCombat:
                 raise ValueError("Recipients must be other units on the sender's team")
             planned.append((sender, content, reports, set(recipients)))
         for sender, content, reports, recipients in planned:
+            team = self.units[sender].team
             for receiver in sorted(recipients):
                 if not self.can_communicate(sender, receiver):
                     continue
@@ -180,6 +201,18 @@ class GridCombat:
                 for target_name, report in reports.items():
                     current = self.tracks[receiver].get(target_name)
                     if current is None or current.seen_at < report.seen_at:
+                        ally = self.units[receiver]
+                        actionable_before = (current is not None and current.hp > 0 and
+                                             np.linalg.norm(ally.position - current.position) <= ally.stats.attack_range)
+                        actionable_after = (ally.stats.damage > 0 and report.hp > 0 and
+                                            np.linalg.norm(ally.position - report.position) <= ally.stats.attack_range)
+                        pair = (receiver, target_name)
+                        # Credit an actual new firing opportunity, once per receiver/target per episode.
+                        if actionable_after and not actionable_before and pair not in self._rewarded_reports[team]:
+                            self._rewarded_reports[team].add(pair)
+                            self.episode_metrics[team]["useful_reports"] += 1
+                            if reward_reports:
+                                self._pending_information[team]["sharing"] += 1
                         self.tracks[receiver][target_name] = Track(report.position.copy(), report.hp,
                                                                  report.role, report.seen_at, True)
                 if content is not None or reports:
@@ -187,14 +220,14 @@ class GridCombat:
                                                  "targets": list(reports), "has_content": content is not None,
                                                  "step": self.step_count})
 
-    def share_visible_targets(self, team: str):
+    def share_visible_targets(self, team: str, *, reward_reports=True):
         messages = {}
         for name in self.names[team]:
             if self.units[name].alive:
                 targets = [t for t in self.names[self.enemy_team(team)] if self.visible(name, t)]
                 if targets:
                     messages[name] = {"targets": targets}
-        self.exchange_messages(messages)
+        self.exchange_messages(messages, reward_reports=reward_reports)
 
     def n_actions(self, team: str):
         return ATTACK_OFFSET + len(self.names[self.enemy_team(team)])
@@ -332,20 +365,40 @@ class GridCombat:
                 self.winner, self.reason = "blue", "elimination"
             else:
                 self.reason = "timeout"
-        rewards = {t: self.config.damage_reward * actual_damage[t] + self.config.kill_reward * kills[t]
-                   if self.config.reward_mode == "dense" else 0.0 for t in ("red", "blue")}
-        if self.winner is not None:
-            rewards[self.winner] += self.config.win_reward
-            rewards[self.enemy_team(self.winner)] += self.config.loss_reward
-        elif self.reason == "timeout" and self.config.timeout_as_loss:
-            rewards["red"] += self.config.loss_reward
-        for team in rewards:
-            self.episode_returns[team] += rewards[team]
-        self.last_metrics = {"damage": actual_damage, "kills": kills, "died": died, "invalid_actions": invalid,
-                             "team_rewards": rewards, "winner": self.winner, "reason": self.reason}
         self._sample_network()
         self.last_deliveries = []
         self._refresh_perception()
+        if self.config.target_sharing == "auto" and not self.finished:
+            for team in self.names:
+                self.share_visible_targets(team)
+        components = {t: dict.fromkeys(REWARD_COMPONENTS, 0.0) for t in self.names}
+        events = {t: dict(self._pending_information[t]) for t in self.names}
+        for team in self.names:
+            metrics = self.episode_metrics[team]
+            metrics["damage"] += actual_damage[team]
+            metrics["kills"] += kills[team]
+            components[team]["time"] = -self.config.time_penalty
+            if self.config.reward_mode == "dense":
+                components[team]["damage"] = self.config.damage_reward * actual_damage[team]
+                components[team]["kill"] = self.config.kill_reward * kills[team]
+                remaining = max(0.0, self.config.information_reward_cap - metrics["information_reward"])
+                for kind, weight in (("discovery", self.config.discovery_reward), ("sharing", self.config.sharing_reward)):
+                    bonus = min(remaining, events[team][kind] * weight)
+                    components[team][kind] = bonus
+                    remaining -= bonus
+                    metrics["information_reward"] += bonus
+            self._pending_information[team] = {"discovery": 0, "sharing": 0}
+        if self.winner is not None:
+            components[self.winner]["terminal"] = self.config.win_reward
+            components[self.enemy_team(self.winner)]["terminal"] = self.config.loss_reward
+        elif self.reason == "timeout" and self.config.timeout_as_loss:
+            components["red"]["terminal"] = self.config.loss_reward
+        rewards = {t: sum(components[t].values()) for t in self.names}
+        for team in rewards:
+            self.episode_returns[team] += rewards[team]
+        self.last_metrics = {"damage": actual_damage, "kills": kills, "died": died, "invalid_actions": invalid,
+                             "team_rewards": rewards, "reward_components": components,
+                             "information_events": events, "winner": self.winner, "reason": self.reason}
         return rewards, self.last_metrics
 
     def snapshot(self):
@@ -353,6 +406,8 @@ class GridCombat:
         return {"schema_version": 1, "step": self.step_count, "map_size": list(self.config.map_size),
                 "max_steps": self.config.max_steps, "finished": self.finished,
                 "winner": self.winner, "reason": self.reason, "returns": dict(self.episode_returns),
+                "reward_components": self.last_metrics.get("reward_components", {}),
+                "episode_metrics": {t: dict(m) for t, m in self.episode_metrics.items()},
                 "communication": self.config.communication,
                 "units": [{"id": n, "team": u.team, "role": u.spec.role, "platform": u.spec.platform,
                            "position": u.position.tolist(), "hp": u.hp, "max_hp": u.stats.hp, "alive": u.alive,

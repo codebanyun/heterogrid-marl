@@ -11,7 +11,7 @@ const fs = require('fs');
   const output = path.resolve('output');
   fs.mkdirSync(output, { recursive: true });
   try {
-    await page.goto('http://127.0.0.1:8765', { waitUntil: 'domcontentloaded' });
+    await page.goto(process.env.VIEWER_URL || 'http://127.0.0.1:8765', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.getElementById('tick').textContent === '0');
     await page.getByRole('button', { name: '单步', exact: true }).click();
     await page.waitForFunction(() => document.getElementById('tick').textContent === '1');

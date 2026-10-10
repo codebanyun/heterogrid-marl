@@ -1,4 +1,4 @@
-"""Message phase before action selection; reports cannot originate from unseen targets."""
+"""Exchange messages before actions; reports cannot originate from unseen targets."""
 import numpy as np
 
 from heterogrid import EnvConfig, UnitSpec, parallel_env
