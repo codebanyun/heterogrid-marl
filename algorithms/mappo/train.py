@@ -15,24 +15,10 @@ import torch
 
 from heterogrid import EnvConfig, SMACAdapter
 from heterogrid.core import REWARD_COMPONENTS
-from heterogrid.smac import flatten_observation
+from algorithms.common.evaluation import evaluate, observe, write_json
 from algorithms.common.experiment_log import ExperimentRecorder
 from algorithms.mappo.settings import DEFAULT_CONFIG, PROJECT_ROOT, add_backend_argument, validate_backend
 
-
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-
-
-def observe(env):
-    # The PettingZoo step already computed live observations and action masks.
-    observations = [env.env._last_observations[n] if n in env.env._last_observations
-                    else env.env.core.observation(n) for n in env.env.possible_agents]
-    obs = np.asarray([flatten_observation(o) for o in observations], dtype=np.float32)
-    state = np.repeat(env.get_state()[None], env.n_agents, axis=0)
-    available = np.asarray([o["action_mask"] for o in observations], dtype=np.float32)
-    active = np.asarray([[env.env.core.units[n].alive] for n in env.env.possible_agents], dtype=np.float32)
-    return obs, state, available, active
 
 
 def numpy_batch(tensor, count):
@@ -59,80 +45,6 @@ def restore(path, policy, trainer, device):
     return saved
 
 
-@torch.no_grad()
-def evaluate(policy, args, config, directory, episodes, seed, deterministic, save_replays=True, replay_limit=None):
-    directory.mkdir(parents=True, exist_ok=True)
-    env = SMACAdapter(config=config, record_replay=save_replays)
-    rows = []
-    trainer_rng = torch.random.get_rng_state()
-    cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
-    numpy_rng = np.random.get_state()
-    policy.actor.eval()
-    try:
-        for episode in range(episodes):
-            record_episode = save_replays and (replay_limit is None or episode < replay_limit)
-            env.env.record_replay = record_episode
-            episode_seed = seed + episode
-            torch.manual_seed(episode_seed)
-            env.reset(seed=episode_seed)
-            rnn = np.zeros((env.n_agents, args.recurrent_N, args.hidden_size), dtype=np.float32)
-            masks = np.ones((env.n_agents, 1), dtype=np.float32)
-            transitions = []
-            total_reward = 0.0
-            component_totals = dict.fromkeys(REWARD_COMPONENTS, 0.0)
-            invalid = 0
-            done = False
-            while not done:
-                obs, state, available, active = observe(env)
-                action, rnn_tensor = policy.act(obs, rnn, masks, available, deterministic=deterministic)
-                actions = action.cpu().numpy().reshape(env.n_agents).astype(np.int64)
-                if np.any(available[np.arange(env.n_agents), actions] != 1):
-                    raise RuntimeError("Policy selected a masked action")
-                reward, done, info = env.step(actions.tolist())
-                for key in REWARD_COMPONENTS:
-                    component_totals[key] += info["reward_components"][key]
-                invalid += sum(n.startswith("red_") for n in info["invalid_actions"])
-                transitions.append({"step": env.env.core.step_count, "actions": actions.tolist(),
-                                    "team_reward": reward, "reward_components": info["reward_components"], "done": done})
-                total_reward += reward
-                rnn = rnn_tensor.cpu().numpy()
-            row = {"episode": episode, "seed": episode_seed, "return": total_reward,
-                   "length": env.env.core.step_count, "winner": info["winner"],
-                   "reason": info["termination_reason"], "invalid_red_actions": invalid,
-                   "reward_components": component_totals, **info["episode_metrics"]}
-            rows.append(row)
-            if record_episode:
-                replay = Path(env.save_replay(directory / f"episode_{episode:03d}.json"))
-                data = json.loads(replay.read_text(encoding="utf-8"))
-                data.update(algorithm=args.algorithm_name, evaluation=row, transitions=transitions)
-                write_json(replay, data)
-                write_json(directory / f"actions_{episode:03d}.json", {"episode": row, "transitions": transitions})
-    finally:
-        env.close()
-        torch.random.set_rng_state(trainer_rng)
-        if cuda_rng is not None:
-            torch.cuda.set_rng_state_all(cuda_rng)
-        np.random.set_state(numpy_rng)
-    contacts = [r["first_contact_step"] for r in rows if r["first_contact_step"] is not None]
-    result = {"episodes": episodes, "deterministic": deterministic,
-              "win_rate": sum(r["winner"] == "red" for r in rows) / episodes,
-              "mean_return": float(np.mean([r["return"] for r in rows])),
-              "mean_length": float(np.mean([r["length"] for r in rows])),
-              "timeout_rate": sum(r["reason"] == "timeout" for r in rows) / episodes,
-              "contact_rate": len(contacts) / episodes,
-              "mean_first_contact_step": float(np.mean(contacts)) if contacts else None,
-              "mean_damage": float(np.mean([r["damage"] for r in rows])),
-              "mean_kills": float(np.mean([r["kills"] for r in rows])),
-              "mean_discovered_targets": float(np.mean([r["discovered_targets"] for r in rows])),
-              "mean_useful_reports": float(np.mean([r["useful_reports"] for r in rows])),
-              "mean_reward_components": {k: float(np.mean([r["reward_components"][k] for r in rows])) for k in REWARD_COMPONENTS},
-              "invalid_red_actions": sum(r["invalid_red_actions"] for r in rows),
-              "results": rows}
-    write_json(directory / "summary.json", result)
-    print(json.dumps({"training_seed": args.seed, "evaluation": directory.name,
-                      **{k: v for k, v in result.items() if k != "results"}}), flush=True)
-    return result
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -151,6 +63,8 @@ def main():
     parser.add_argument("--eval-interval", type=int, default=0, help="Environment steps between validation evaluations; 0 disables")
     parser.add_argument("--save-interval", type=int, help="Environment steps between model snapshots; defaults to 25 rollouts")
     parser.add_argument("--trajectory-interval", type=int, default=0, help="Save sampled rollouts at this interval; 0 saves every rollout")
+    parser.add_argument("--no-trajectories", action="store_true", help="Do not retain training rollout arrays")
+    parser.add_argument("--no-evaluation-files", action="store_true", help="Keep periodic evaluation metrics without separate directories")
     parser.add_argument("--log-interval", type=int, default=0, help="Export metric series at this interval; 0 exports every rollout")
     parser.add_argument("--replay-episodes", type=int, help="Maximum full replays per final evaluation group; all episodes are scored")
     parser.add_argument("--heldout-episodes", type=int, default=0)
@@ -230,7 +144,7 @@ def main():
     default_output = Path("output") / args.algorithm_name / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output = cli.output or default_output
     output.mkdir(parents=True, exist_ok=False)
-    for name in ("models", "trajectories", "replays"):
+    for name in ("models", "replays") + (() if cli.no_trajectories else ("trajectories",)):
         (output / name).mkdir()
     metadata = {"algorithm": args.algorithm_name, "environment": config.to_dict(),
                "mappo_args": vars(args), "device": str(device), "mappo_root": str(cli.mappo_root.resolve()),
@@ -242,8 +156,8 @@ def main():
                "env": "heterogrid", "env_args": config.to_dict(), "cli": vars(cli).copy(),
                "results_group": "heterogrid", "results_env_name": cli.results_env_name}
     metadata["cli"] = {k: str(v) if isinstance(v, Path) else v for k, v in metadata["cli"].items()}
-    sources = [Path(__file__), PROJECT_ROOT / "algorithms/common/experiment_log.py"]
-    sources += [Path(__file__).with_name(name) for name in ("launch.py", "study.py", "ablate.py", "audit.py", "settings.py")]
+    sources = [Path(__file__)] + list((PROJECT_ROOT / "algorithms/common").glob("*.py"))
+    sources += [Path(__file__).with_name(name) for name in ("launch.py", "matrix.py", "study.py", "ablate.py", "audit.py", "settings.py")]
     sources += list((PROJECT_ROOT / "heterogrid").glob("*.py"))
     sources += [cli.config, cli.mappo_root / "onpolicy/config.py"]
     sources += list((cli.mappo_root / "onpolicy/algorithms").rglob("*.py"))
@@ -293,7 +207,8 @@ def main():
             checkpoint(output / "models" / "best.pt", policy, trainer, args, config, step)
     if cli.eval_interval:
         initial_greedy = evaluate(policy, args, config, output / "evaluations" / "step_000000_greedy",
-                                  cli.eval_episodes, cli.eval_seed, True, save_replays=False)
+                                  cli.eval_episodes, cli.eval_seed, True, save_replays=False,
+                                  save_summary=not cli.no_evaluation_files)
         # Sampled baseline has already been recorded.
         recorder.evaluation(0, initial_greedy, True)
         best_score = (initial_greedy["win_rate"], initial_greedy["mean_return"])
@@ -303,7 +218,8 @@ def main():
         for deterministic in (False, True):
             mode = "greedy" if deterministic else "sampled"
             heldout_before[mode] = evaluate(policy, args, config, output / "evaluations" / ("heldout_before_" + mode),
-                cli.heldout_episodes, cli.heldout_seed, deterministic, save_replays=False)
+                cli.heldout_episodes, cli.heldout_seed, deterministic, save_replays=False,
+                save_summary=not cli.no_evaluation_files)
     buffer = SharedReplayBuffer(args, n_agents, obs_space, state_space, action_space)
     for i, env in enumerate(envs):
         env.reset(seed=cli.seed + i)
@@ -379,7 +295,7 @@ def main():
                     raise RuntimeError(f"Non-finite training metrics: {losses}")
                 total_steps = update * cli.num_envs * cli.rollout_length
                 episode_log.flush()
-                if not cli.trajectory_interval or total_steps % cli.trajectory_interval == 0 or update in (1, updates):
+                if not cli.no_trajectories and (not cli.trajectory_interval or total_steps % cli.trajectory_interval == 0 or update in (1, updates)):
                     # T+1 observations retain the next state; masks distinguish resets from transitions.
                     np.savez_compressed(output / "trajectories" / f"rollout_{update:05d}.npz",
                         obs=buffer.obs, state=buffer.share_obs, available_actions=buffer.available_actions,
@@ -412,9 +328,11 @@ def main():
                         checkpoint(output / "models" / f"step_{total_steps:08d}.pt", policy, trainer, args, config, total_steps)
                 if cli.eval_interval and total_steps % cli.eval_interval == 0 and update != updates:
                     sampled_eval = evaluate(policy, args, config, output / "evaluations" / f"step_{total_steps:06d}_sampled",
-                                            cli.eval_episodes, cli.eval_seed, False, save_replays=False)
+                                            cli.eval_episodes, cli.eval_seed, False, save_replays=False,
+                                            save_summary=not cli.no_evaluation_files)
                     greedy_eval = evaluate(policy, args, config, output / "evaluations" / f"step_{total_steps:06d}_greedy",
-                                           cli.eval_episodes, cli.eval_seed, True, save_replays=False)
+                                           cli.eval_episodes, cli.eval_seed, True, save_replays=False,
+                                           save_summary=not cli.no_evaluation_files)
                     validation(total_steps, sampled_eval, greedy_eval)
                 buffer.after_update()
     finally:

@@ -8,6 +8,7 @@
 |---|---|---|
 | `environment/` | 对抗、观测信息边界、通信、奖励、配置、PettingZoo API、SMAC 固定槽位与回放 | 环境核心依赖；离屏渲染测试在缺少 matplotlib 时跳过 |
 | `integrations/mappo/` | MAPPO 入口、预算对齐、进度读取、路径配置、缓存观测与死亡掩码 | 观测测试可选 PyTorch，其余不需要外部 MAPPO 源码 |
+| `integrations/smpe/` | 冻结配置、源码隔离、原生模型更新、终局处理、动作掩码和完整检查点 | 矩阵测试只需核心依赖；后端测试需 PyTorch，并用 `SMPE_ROOT` 指定外部仓库 |
 | `common/` | 日志、指标、源码快照、可选结果索引和运行状态 | 环境核心依赖 |
 | `viewer/` | HTTP 控制、快照只读、配置原子性；另有可选浏览器检查 | Python 测试无前端依赖，浏览器检查需 Node.js 与 Playwright |
 

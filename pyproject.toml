@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24", "gymnasium>=1.0,<2", "pettingzoo>=1.24,<2"]
 [project.optional-dependencies]
 render = ["matplotlib>=3.7"]
 mappo = ["torch>=1.12", "matplotlib>=3.7"]
+smpe = ["torch>=1.12", "matplotlib>=3.7", "PyYAML>=6", "gym>=0.21,<0.27", "numpy>=1.24,<2"]
 
 [project.scripts]
 heterogrid-viewer = "heterogrid.viewer:main"

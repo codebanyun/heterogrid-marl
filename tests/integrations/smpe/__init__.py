@@ -1,0 +1,1 @@
+"""SMPE integration regression tests."""
