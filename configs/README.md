@@ -8,6 +8,7 @@
 |---|---|
 | `scenarios/default_6v6.json` | 基础 24×24×6、6v6、规则蓝方、距离通信；手动目标报告、基础奖励、超时平局，与 `EnvConfig()` 等价 |
 | `scenarios/6v6_rule_distance.json` | 同一地图与阵容，双方自动报告；超时失败、时间成本、发现与有效共享奖励，适合作为学习基线 |
+| `scenarios/6v6_red_none_blue_distance.json` | 同一学习任务；红方无通信，蓝方固定距离通信半径10、无失联，双方仍走自动报告阶段 |
 | `scenarios/3v3_compact.json` | 6×6×3、3v3、静止但可还击的蓝方、全连接通信，适合快速流程检查 |
 | `ablations/6v6_shared.json` | 6v6 基础任务，双方自动共享，保留基础奖励 |
 | `ablations/6v6_terminal.json` | 在共享设置上增加超时失败与每步 0.005 时间成本，不加情报奖励 |
@@ -32,6 +33,57 @@ random_links = replace(config, communication='random', dropout_probability=0.25)
 ```
 
 保存自定义配置时使用 JSON，并给出任务含义明确的文件名。角色与平台、观测维度、通信和奖励字段详见[环境文档](../docs/environment.md)。
+
+## 固定蓝方，只改变红方通信
+
+`EnvConfig` 的 `red_communication`、`blue_communication` 支持红蓝独立配置。Python 中使用导出的 `CommunicationConfig`，JSON 中使用对象；省略或 `null` 表示该队继承旧版顶层共享字段。
+
+```python
+from dataclasses import replace
+from heterogrid import CommunicationConfig, EnvConfig, SMACAdapter
+
+base = EnvConfig.load("configs/scenarios/6v6_rule_distance.json")
+base = replace(base,
+    red_communication=CommunicationConfig("distance", radius=10, dropout_probability=0),
+    blue_communication=CommunicationConfig("distance", radius=10, dropout_probability=0))
+red_none = replace(base, red_communication=CommunicationConfig("none"))
+red_full = replace(base, red_communication=CommunicationConfig("full"))
+red_radius5 = replace(base, red_communication=CommunicationConfig("distance", radius=5))
+red_radius15 = replace(base, red_communication=CommunicationConfig("distance", radius=15))
+red_outage25 = replace(base, red_communication=CommunicationConfig("distance", radius=10, dropout_probability=.25))
+red_outage50 = replace(base, red_communication=CommunicationConfig("distance", radius=10, dropout_probability=.50))
+env = SMACAdapter(config=red_outage50)
+```
+
+对应的独立通信 JSON 字段：
+
+```json
+{
+  "target_sharing": "auto",
+  "red_communication": {"mode": "distance", "radius": 10.0, "dropout_probability": 0.5},
+  "blue_communication": {"mode": "distance", "radius": 10.0, "dropout_probability": 0.0}
+}
+```
+
+此片段只展示通信字段，其余省略项按 `EnvConfig` 默认值，不自动继承学习基线的奖励。可直接加载完整示例 `scenarios/6v6_red_none_blue_distance.json`，它保留学习基线的地图、阵容、规则蓝方、奖励及200步时限。
+
+| 独立配置字段 | 默认值 | 含义 |
+|---|---|---|
+| `mode` | `distance` | 拓扑：`none`、`full`、`distance`；不使用旧版 `random` 名称 |
+| `radius` | `10.0` | 三维欧氏半径，仅 `distance` 生效，含边界 |
+| `dropout_probability` | `0.0` | 每个节点每个决策步独立失联概率；可叠加在 `distance` 或 `full` 上，失联同时禁止发送和接收 |
+
+**优先级：该队独立对象 > 顶层共享字段。** 独立对象是完整配置，不逐字段继承顶层值；对象内省略项采用上表默认值。设置了 `red_communication` 后，修改顶层 `communication` 不会覆盖它。可以只给蓝方独立配置、让红方继续继承顶层字段，但建议正式单边对照显式设置双方对象。
+
+`config.communication_for("blue")` 返回解析后的蓝方设置；`config.to_dict()` 保存原始配置与覆盖对象。快照/回放帧中的 `team_communication` 记录两队实际生效的设置。观测与动作维度、角色能力、奖励系数和规则策略代码不变。
+
+浏览器可加载此类JSON并分别显示红蓝通信状态；现有网页共享参数控件不覆盖独立对象，调整独立配置需修改JSON后重新加载，或通过Python/API提交新配置。
+
+自动共享阶段仍对双方执行；`mode="none"` 会阻止该队自动及手动报告，不需要关闭另一队的自动共享。蓝方固定的是策略、通信规则及随机过程，而非动作轨迹；对方位置/存活情况变化后，蓝方行为和实际可用链路仍可变化。
+
+只要启用任一队独立对象，通信采样便采用红蓝分离的随机数流；每步对全部固定槽位取样，死亡或无通信不改变后续抽样位置。在相同seed、决策步和蓝方存活条件下，改变红方通信不会扰动蓝方的失联采样。未启用独立对象时沿用旧采样方式，保留旧seed轨迹。
+
+所有算法的单次训练入口都可通过 `--config` 加载此类配置；原有灵敏度任务生成器仍保留旧版双边矩阵，不会自动变成新的单边实验。已有模型、输出配置和冻结源码不会改写。
 
 ## 自定义 JSON 场景
 
@@ -72,9 +124,10 @@ random_links = replace(config, communication='random', dropout_probability=0.25)
 | `platform` | `uav` | `uav` / `usv` / `robot` / `robot_dog`，当前仅作平台标签 |
 | `max_steps` | `200` | 单局环境步上限，正整数 |
 | `opponent` | `rule` | `dummy` / `static` / `random` / `rule` / `pretrained`，控制蓝方 |
-| `communication` | `distance` | `none` / `full` / `distance` / `random`，四种互斥链路模式 |
+| `communication` | `distance` | 旧版共享字段：`none` / `full` / `distance` / `random`，未被独立对象覆盖的队伍使用它 |
 | `comm_radius` | `10.0` | 非负，距离模式的三维欧氏通信半径 |
 | `dropout_probability` | `0.25` | 0 到 1，仅随机模式生效；每个节点每步的失联概率，不是逐链路丢包率 |
+| `red_communication`、`blue_communication` | `null` | 可选独立对象，含 `mode`、`radius`、`dropout_probability`，见上文；优先于顶层共享设置 |
 | `target_sharing` | `manual` | `manual` 由调用者报告；`auto` 为双方经合法链路自动报告 |
 | `scripted_target_sharing` | `true` | 手动模式下是否允许脚本蓝方自动报告；不控制红方显式报告 |
 | `target_ttl` | `2` | 正整数；记录年龄不超过该值时有效，超过后清除 |
@@ -118,7 +171,7 @@ config = replace(config, role_stats={
 
 1. `EnvConfig.load(path)` 使用文件中明确给出的值，其余项取类默认值；不会读取另一个场景作为基底。
 2. Python 的 `replace(config, ...)` 返回新配置，覆盖指定字段，保留其余字段。仅创建配置不会修改已存在的环境。
-3. `heterogrid.rollout` 的 `--opponent` 和 `--communication` 覆盖文件中的对应字段，不连带修改 `target_sharing` 等其他参数；地图、阵容和通信半径需要在文件中设置。
+3. `heterogrid.rollout` 的 `--opponent` 和 `--communication` 覆盖文件中的对应顶层字段，不连带修改独立通信对象、`target_sharing` 等参数；独立对象仍优先。地图、阵容和通信半径需要在文件中设置。
 4. `heterogrid.viewer --config ...` 设置演示会话的初始配置。网页上的配置变更会重置当前演示，但不写回 JSON，不影响独立训练。
 5. `opponent="pretrained"` 还需提供策略对象或命令行策略工厂；文件中只写该字符串不能自动找到检查点。
 

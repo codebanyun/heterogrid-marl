@@ -103,7 +103,26 @@ env.close()
 | `distance` | 三维欧氏距离不超过半径时可通信 | `comm_radius`，默认 10 |
 | `random` | 每个决策步独立采样各节点是否在线；失联节点不能发也不能收，在线同队节点间不受距离限制 | `dropout_probability`，默认 0.25 |
 
-这四种模式互斥，`random` 不是“距离链路再随机丢包”，`dropout_probability` 不影响 `distance` 模式。通信仅限同队、单跳，红蓝双方使用相同的链路规则。
+以上是旧版共享字段的语义：这四种模式互斥，`random` 不是“距离链路再随机丢包”，顶层 `dropout_probability` 不影响 `distance` 模式。通信仅限同队、单跳；未指定独立配置时，红蓝双方使用相同规则，保留原有实验行为。
+
+现在支持 `red_communication` / `blue_communication` 分别设置两队。下面固定蓝方半径10、无失联，只改变红方：
+
+```python
+from dataclasses import replace
+from heterogrid import CommunicationConfig, EnvConfig
+
+base = EnvConfig.load("configs/scenarios/6v6_rule_distance.json")
+base = replace(base,
+    red_communication=CommunicationConfig(mode="distance", radius=10, dropout_probability=0),
+    blue_communication=CommunicationConfig(mode="distance", radius=10, dropout_probability=0))
+red_none = replace(base, red_communication=CommunicationConfig(mode="none"))
+red_full = replace(base, red_communication=CommunicationConfig(mode="full"))
+red_radius15 = replace(base, red_communication=CommunicationConfig(mode="distance", radius=15))
+red_outage50 = replace(base, red_communication=CommunicationConfig(
+    mode="distance", radius=10, dropout_probability=0.50))
+```
+
+独立配置将拓扑（`none/full/distance`）和节点失联概率分开，因此可以表达“半径10叠加50%节点失联”。两队使用独立通信随机数流；默认自动共享阶段仍对双方执行，但投递分别受各自链路约束。设置优先级、JSON示例见[配置说明](configs/README.md#固定蓝方只改变红方通信)。
 
 链路存在不代表敌情必然共享，还需要选择报告方式：
 
@@ -203,6 +222,10 @@ configs/             算法无关的场景配置和奖励消融配置
 algorithms/          按算法分组的可选训练接入
   common/            公共实验记录工具
   mappo/             MAPPO 接入及独立使用说明
+  qmix/              QMIX 接入与灵敏度实验
+  qtran/             QTRAN-base 接入与灵敏度实验
+  maa2c/             EPyMARL MAA2C 接入与灵敏度实验
+  coma/              EPyMARL COMA 接入与灵敏度实验
 tutorials/           接口、通信和预训练对手示例
 tests/               按职责分组的自动化回归测试
 docs/                环境细节与开发维护约定

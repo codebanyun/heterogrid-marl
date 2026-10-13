@@ -41,6 +41,26 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(e.core.step_count, 0)
             session.close()
 
+    def test_independent_communication_configuration_and_invalid_update_are_atomic(self):
+        session = ViewerSession(EnvConfig())
+        try:
+            config = session.config.to_dict()
+            config.update(target_sharing="auto", red_communication={"mode": "none"},
+                          blue_communication={"mode": "distance", "radius": 10, "dropout_probability": 0})
+            session.command({"action": "configure", "config": config, "seed": 42})
+            frame = session.state()["frame"]
+            self.assertTrue(frame["independent_communication"])
+            self.assertEqual(frame["team_communication"]["red"]["mode"], "none")
+            self.assertEqual(frame["team_communication"]["blue"]["mode"], "distance")
+            session.command({"action": "step"})
+            config["blue_communication"]["dropout_probability"] = 2
+            with self.assertRaises(ValueError):
+                session.command({"action": "configure", "config": config})
+            self.assertEqual(session.state()["frame"]["step"], 1)
+            self.assertEqual(session.config.communication_for("blue").dropout_probability, 0)
+        finally:
+            session.close()
+
     def test_http_page_state_and_control(self):
         session = ViewerSession(EnvConfig(max_steps=2))
         server = ViewerServer(("127.0.0.1", 0), make_handler(session))

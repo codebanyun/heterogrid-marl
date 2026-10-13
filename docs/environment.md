@@ -78,7 +78,21 @@ env.close()
 
 ### 通信接口
 
-`communication` 支持 `none/full/distance/random`。距离模式默认半径 10。random 模式每个决策步对节点独立采样，默认失联概率 0.25；失联节点该步既不能发也不能收。每步只采样一次，重复观察或交换消息不会改变链路。只允许同队通信，不做多跳。
+旧版顶层 `communication` 支持 `none/full/distance/random`，默认同时作用于两队。距离模式默认半径10；random为全连接上的节点失联，默认概率0.25，不叠加距离限制。失联节点该步既不能发也不能收。每步只采样一次，重复观察或交换消息不会改变链路。只允许同队通信，不做多跳。
+
+支持 `red_communication`、`blue_communication` 分别指定 `CommunicationConfig(mode, radius, dropout_probability)`。独立对象的拓扑为 `none/full/distance`，失联概率默认0，能够与距离限制组合；对象优先于该队的顶层共享字段，省略对象或设为None才继承旧字段。例如：
+
+```python
+from dataclasses import replace
+from heterogrid import CommunicationConfig, EnvConfig
+
+config = EnvConfig.load("configs/scenarios/6v6_rule_distance.json")
+config = replace(config,
+    red_communication=CommunicationConfig("distance", radius=10, dropout_probability=.5),
+    blue_communication=CommunicationConfig("distance", radius=10, dropout_probability=0))
+```
+
+蓝方通信固定半径10且无失联，只改变红方对象即可做单边通信对照，不改变规则蓝方代码或角色能力。自动目标报告仍双方执行，但各自受对应链路限制，红方none不妨碍蓝方共享。启用独立配置后两队使用隔离的通信随机数流，每步为全部槽位采样；不启用时保留旧采样顺序和旧实验轨迹。快照的 `team_communication` 显示实际配置，观测/动作空间不扩维。完整JSON及优先级见[配置说明](../configs/README.md#固定蓝方只改变红方通信)。
 
 默认 `target_sharing='manual'`，环境不会自动把红方敌情共享给所有节点。显式通信阶段放在标准 step **之前**：
 
@@ -100,7 +114,7 @@ obs, infos = env.exchange_messages({
 - 目标与消息默认在记录年龄 `0,1,2` 时有效，年龄大于 2 才清除。链路随后断开不撤销已收到的记忆。
 - `get_comm_mask()` 是传输／诊断接口，矩阵方向为 `[sender, receiver]`；不要直接作为全局 actor 输入。actor 获取的是自己实际收到的消息。
 - `share_visible_targets()` 是**显式广播基线**。`target_sharing='auto'` 可开启自动广播，但此时不适合比较算法是否学会选择通信结构。
-- 原始手动模式默认 `scripted_target_sharing=true`，脚本蓝方会自行共享合法目标报告。无通信对照需同时设置 `target_sharing='manual'` 和 `scripted_target_sharing=false`。推荐训练配置采用 `target_sharing='auto'`，双方在同一阶段自动共享；预训练蓝方在 auto 模式同样收到合法报告。自动广播不等于学会通信，比较学习通信算法时应显式控制双方通信阶段。
+- 原始手动模式默认 `scripted_target_sharing=true`，脚本蓝方会自行共享合法目标报告。若只是关闭物理通信，设置对应队伍 `mode='none'` 即可；若要禁止调用自动报告阶段，再设置 `target_sharing='manual'` 和 `scripted_target_sharing=false`。推荐训练配置采用 `target_sharing='auto'`，双方在同一阶段自动共享，但链路可独立配置；预训练蓝方在 auto 模式同样收到合法报告。自动广播不等于学会通信，比较学习通信算法时应显式控制双方通信阶段。
 
 ## SMAC 风格固定槽位接口
 
@@ -166,6 +180,12 @@ env = parallel_env(config=config)
 支持自定义 role_stats，但一次实验内阵容固定，不动态增援／改变观测维度。不同阵容创建不同环境。
 
 ## Linux 训练与本地浏览器查看
+
+源码仓库提供 [MAPPO/R-MAPPO](../algorithms/mappo/README.md)、[QMIX](../algorithms/qmix/README.md)、[QTRAN-base](../algorithms/qtran/README.md)、[MAA2C](../algorithms/maa2c/README.md) 与 [COMA](../algorithms/coma/README.md) 的可选接入。它们使用同一套环境配置；算法参数与实验预算保存在算法目录和每次输出记录，不进入环境规则。
+
+QMIX/QTRAN通过固定槽位SMAC接口接入：每步只取一次团队奖励，执行网络读取局部观测和合法动作掩码，训练联合价值函数读取全局状态。灵敏度矩阵保留200步时限、规则蓝方、原有角色能力、奖励和自动目标共享，只改变地图、人数或通信设置。配置、后台运行与评估方法详见对应算法说明。
+
+MAA2C/COMA也通过相同SMAC接口接入，复用EPyMARL原始learner。共享GRU actor只用局部观测与agent ID；MAA2C为集中式V critic，COMA为屏蔽自身当前动作的反事实Q critic。固定4环境，采集4个完整新回合后更新一次，不使用经验回放；hidden64、学习率、n-step、熵系数与目标更新频率跨场景保持固定。200步超时作为任务终局不bootstrap，不额外标准化奖励。每次精确5M团队步，验证64局、独立测试128局，贪心为主，categorical采样为辅。完整固定参数和后台命令见算法说明，输出分别为 `output/maa2c/`、`output/coma/`。
 
 **推荐独立评估进程**，定期加载训练检查点，运行环境并发布快照。发布器必须显式启用，默认训练路径完全没有可视化开销：
 

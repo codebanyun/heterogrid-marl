@@ -1,7 +1,7 @@
 """Algorithm-independent, simultaneous grid combat and legal message transport."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
@@ -48,6 +48,9 @@ class GridCombat:
         self.names = {t: [f"{t}_{i}" for i in range(len(getattr(config, t)))] for t in ("red", "blue")}
         self.all_names = self.names["red"] + self.names["blue"]
         self.rng = np.random.default_rng()
+        self.team_communication = {t: config.communication_for(t) for t in self.names}
+        self._independent_communication = config.red_communication is not None or config.blue_communication is not None
+        self._communication_rng = {t: np.random.default_rng() for t in self.names}
         self.units: dict[str, Unit] = {}
         self.step_count = 0
         self.finished = False
@@ -69,6 +72,9 @@ class GridCombat:
     def reset(self, seed=None, positions=None):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
+            if self._independent_communication:
+                streams = np.random.SeedSequence(seed).spawn(2)
+                self._communication_rng = {t: np.random.default_rng(s) for t, s in zip(self.names, streams)}
         self.units = {}
         positions = {} if positions is None else positions
         if set(positions) - set(self.all_names):
@@ -112,6 +118,18 @@ class GridCombat:
 
     def _sample_network(self):
         # A random node outage applies to both send and receive, for one decision tick.
+        if self._independent_communication:
+            self.online = {}
+            for team, names in self.names.items():
+                config = self.team_communication[team]
+                # Draw for ALL slots each tick, including dead/offline slots. Neither
+                # the other team's configuration nor early deaths shift this stream.
+                draws = self._communication_rng[team].random(len(names))
+                for name, draw in zip(names, draws):
+                    self.online[name] = (self.units[name].alive and config.mode != "none" and
+                                         draw >= config.dropout_probability)
+            return
+        # No overrides: preserve historical RNG consumption and trajectories exactly.
         probability = self.config.dropout_probability if self.config.communication == "random" else 0.0
         self.online = {n: self.units[n].alive and self.config.communication != "none" and self.rng.random() >= probability
                        for n in self.all_names}
@@ -120,7 +138,9 @@ class GridCombat:
         a, b = self.units[sender], self.units[receiver]
         if sender == receiver or a.team != b.team or not self.online[sender] or not self.online[receiver]:
             return False
-        return self.config.communication != "distance" or np.linalg.norm(a.position - b.position) <= self.config.comm_radius
+        config = self.team_communication[a.team]
+        return config.mode != "none" and (config.mode != "distance" or
+                np.linalg.norm(a.position - b.position) <= config.radius)
 
     def comm_mask(self, team: str):
         names = self.names[team]
@@ -409,6 +429,8 @@ class GridCombat:
                 "reward_components": self.last_metrics.get("reward_components", {}),
                 "episode_metrics": {t: dict(m) for t, m in self.episode_metrics.items()},
                 "communication": self.config.communication,
+                "independent_communication": self._independent_communication,
+                "team_communication": {t: asdict(c) for t, c in self.team_communication.items()},
                 "units": [{"id": n, "team": u.team, "role": u.spec.role, "platform": u.spec.platform,
                            "position": u.position.tolist(), "hp": u.hp, "max_hp": u.stats.hp, "alive": u.alive,
                            "vision": u.stats.vision, "attack_range": u.stats.attack_range,

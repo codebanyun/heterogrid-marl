@@ -6,6 +6,12 @@
 
 - `common/`：公共实验记录工具，不放环境规则或某个算法的网络结构。
 - `mappo/`：[MAPPO 与 R-MAPPO 使用说明](mappo/README.md)。
+- `qmix/`：[QMIX 接入、后台任务矩阵与结果说明](qmix/README.md)。
+- `qtran/`：[QTRAN-base 接入说明](qtran/README.md)。
+- `maa2c/`：[EPyMARL MAA2C 接入与同预算实验](maa2c/README.md)。
+- `coma/`：[EPyMARL COMA 接入说明](coma/README.md)。
+- `common/actor_critic/`：MAA2C/COMA共用的on-policy采集、外部learner接入与队列；复用公共报告格式。
+- `common/value_decomposition/`：QMIX/QTRAN共用的训练、回放、后台队列与报告工具。
 
 新增算法时创建 `algorithms/<算法名>/`，包含独立的中文 `README.md`、训练入口和必要的适配代码。只为已实现的算法创建目录，不预建空占位目录。
 
