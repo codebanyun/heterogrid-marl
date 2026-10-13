@@ -181,7 +181,7 @@ env = parallel_env(config=config)
 
 ## Linux 训练与本地浏览器查看
 
-源码仓库提供 [MAPPO/R-MAPPO](../algorithms/mappo/README.md)、[QMIX](../algorithms/qmix/README.md)、[QTRAN-base](../algorithms/qtran/README.md)、[MAA2C](../algorithms/maa2c/README.md) 与 [COMA](../algorithms/coma/README.md) 的可选接入。它们使用同一套环境配置；算法参数与实验预算保存在算法目录和每次输出记录，不进入环境规则。
+源码仓库提供 [MAPPO/R-MAPPO](../algorithms/mappo/README.md)、[SMPE](../algorithms/smpe/README.md)、[QMIX](../algorithms/qmix/README.md)、[QTRAN-base](../algorithms/qtran/README.md)、[MAA2C](../algorithms/maa2c/README.md) 与 [COMA](../algorithms/coma/README.md) 的可选接入。它们使用同一套环境配置；算法参数与实验预算保存在算法目录和每次输出记录，不进入环境规则。
 
 QMIX/QTRAN通过固定槽位SMAC接口接入：每步只取一次团队奖励，执行网络读取局部观测和合法动作掩码，训练联合价值函数读取全局状态。灵敏度矩阵保留200步时限、规则蓝方、原有角色能力、奖励和自动目标共享，只改变地图、人数或通信设置。配置、后台运行与评估方法详见对应算法说明。
 

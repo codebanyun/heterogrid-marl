@@ -8,29 +8,15 @@ from pathlib import Path
 
 import numpy as np
 
-from heterogrid import EnvConfig, SMACAdapter
+from algorithms.common.audit import audit_records, audit_replays
 from heterogrid.core import REWARD_COMPONENTS
 
 
 def audit(path, recompute=False):
     path = Path(path)
-    run = json.loads((path / "run.json").read_text())
-    config = json.loads((path / "config.json").read_text())
-    summary = json.loads((path / "summary.json").read_text())
-    metrics = json.loads((path / "metrics.json").read_text())
-    info = json.loads((path / "info.json").read_text())
-    assert run["status"] == "COMPLETED", run["status"]
+    run, config, summary, metrics, info = audit_records(path)
     assert summary["environment_steps"] == config["t_max"]
-    assert summary["checkpoint_reload_equal"] and summary["invalid_red_actions"] == 0
     assert summary["actor_parameter_delta_l2"] > 0 and summary["critic_parameter_delta_l2"] > 0
-    assert Path(config["registered_path"]).resolve() == path.resolve()
-    for source in run["experiment"]["sources"]:
-        assert hashlib.sha256((path / source["snapshot"]).read_bytes()).hexdigest() == source["sha256"]
-    for name, metric in metrics.items():
-        assert len(metric["steps"]) == len(metric["values"]) == len(metric["timestamps"])
-        assert np.isfinite(metric["values"]).all()
-        assert metric["steps"] == sorted(metric["steps"])
-        assert info[name] == metric["values"] and info[name + "_T"] == metric["steps"]
     cli = config["cli"]
     if cli["eval_interval"]:
         expected = [0] + list(range(cli["eval_interval"], cli["steps"], cli["eval_interval"])) + [cli["steps"]]
@@ -41,6 +27,8 @@ def audit(path, recompute=False):
     batch = cli["num_envs"] * cli["rollout_length"]
     expected_updates = [u for u in range(1, summary["updates"] + 1)
                         if not interval or (u * batch) % interval == 0 or u in (1, summary["updates"])]
+    if cli.get("no_trajectories", False):
+        expected_updates = []
     assert [int(f.stem.split("_")[-1]) for f in rollouts] == expected_updates
     steps = 0
     for file in rollouts:
@@ -58,39 +46,13 @@ def audit(path, recompute=False):
             np.testing.assert_array_equal(data["masks"][1:, :, 0, 0] == 0, data["environment_done"])
             steps += actions.shape[0] * actions.shape[1]
     assert steps == len(expected_updates) * batch
-    if not interval:
+    if not interval and not cli.get("no_trajectories", False):
         assert steps == summary["environment_steps"]
-    replays = sorted((path / "replays").rglob("episode_*.json"))
-    recomputed_groups = set()
-    for file in replays:
-        replay = json.loads(file.read_text())
-        row = replay["evaluation"]
-        transitions = replay["transitions"]
-        assert replay["schema_version"] == 1
-        assert len(replay["frames"]) == row["length"] + 1
-        assert len(transitions) == row["length"]
-        assert transitions[-1]["done"]
-        assert row["invalid_red_actions"] == 0
-        np.testing.assert_allclose(sum(t["team_reward"] for t in transitions), row["return"], atol=1e-7)
-        for transition in transitions:
-            np.testing.assert_allclose(sum(transition["reward_components"].values()), transition["team_reward"], atol=1e-7)
-        if recompute and file.parent not in recomputed_groups:
-            env = SMACAdapter(config=EnvConfig.from_dict(config["environment"]))
-            try:
-                env.reset(seed=row["seed"])
-                assert env.env.core.snapshot() == replay["frames"][0], (file, "reset")
-                for index, transition in enumerate(transitions, start=1):
-                    reward, done, _ = env.step(transition["actions"])
-                    assert env.env.core.snapshot() == replay["frames"][index], (file, index)
-                    np.testing.assert_allclose(reward, transition["team_reward"], atol=1e-7)
-                    assert done == transition["done"]
-            finally:
-                env.close()
-            recomputed_groups.add(file.parent)
+    replay_report = audit_replays(path, config, recompute)
     result = {"path": str(path.resolve()), "environment_steps": summary["environment_steps"],
               "stored_rollout_steps": steps, "rollouts": len(rollouts),
-              "replays": len(replays), "metric_series": len(metrics), "source_snapshots": len(run["experiment"]["sources"]),
-              "recomputed_replays": len(recomputed_groups), "status": "PASSED"}
+              "replays": replay_report["replays"], "metric_series": len(metrics), "source_snapshots": len(run["experiment"]["sources"]),
+              "recomputed_replays": replay_report["recomputed_replays"], "status": "PASSED"}
     (path / "audit.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 

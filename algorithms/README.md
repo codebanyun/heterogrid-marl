@@ -4,8 +4,9 @@
 
 ## 目录约定
 
-- `common/`：公共实验记录工具，不放环境规则或某个算法的网络结构。
+- `common/`：公共记录、评估、审计、队列和多种子汇总，不放环境规则或某个算法的网络结构。
 - `mappo/`：[MAPPO 与 R-MAPPO 使用说明](mappo/README.md)。
+- `smpe/`：[SMPE 使用说明](smpe/README.md)，复用外部仓库的循环策略、状态模型和内在探索奖励。
 - `qmix/`：[QMIX 接入、后台任务矩阵与结果说明](qmix/README.md)。
 - `qtran/`：[QTRAN-base 接入说明](qtran/README.md)。
 - `maa2c/`：[EPyMARL MAA2C 接入与同预算实验](maa2c/README.md)。

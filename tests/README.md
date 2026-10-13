@@ -11,6 +11,7 @@
 | `integrations/mappo/` | MAPPO 入口、预算对齐、进度读取、路径配置、缓存观测与死亡掩码 | 观测测试可选 PyTorch，其余不需要外部 MAPPO 源码 |
 | `integrations/test_value_decomposition.py` | QMIX/QTRAN任务矩阵、回放终局与补齐、目标RNN首帧对齐、缺失种子曲线处理 | RNN测试可选PyTorch，不需要外部算法源码 |
 | `integrations/test_actor_critic.py` | MAA2C/COMA固定参数、终局n-step、padding、执行与原MAC一致、COMA反事实输入、真实批量更新 | 可选PyTorch、PyYAML与EPyMARL源码，`EPYMARL_ROOT`指向其src目录 |
+| `integrations/smpe/` | 冻结配置、源码隔离、原生模型更新、终局处理、动作掩码和完整检查点 | 矩阵测试只需核心依赖；后端测试需 PyTorch，并用 `SMPE_ROOT` 指定外部仓库 |
 | `common/` | 日志、指标、源码快照、可选结果索引和运行状态 | 环境核心依赖 |
 | `viewer/` | HTTP 控制、快照只读、配置原子性；另有可选浏览器检查 | Python 测试无前端依赖，浏览器检查需 Node.js 与 Playwright |
 

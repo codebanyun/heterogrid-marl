@@ -222,6 +222,7 @@ configs/             算法无关的场景配置和奖励消融配置
 algorithms/          按算法分组的可选训练接入
   common/            公共实验记录工具
   mappo/             MAPPO 接入及独立使用说明
+  smpe/              SMPE 接入、评估与实验矩阵
   qmix/              QMIX 接入与灵敏度实验
   qtran/             QTRAN-base 接入与灵敏度实验
   maa2c/             EPyMARL MAA2C 接入与灵敏度实验
