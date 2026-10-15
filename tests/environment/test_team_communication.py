@@ -1,8 +1,10 @@
 """Independent red/blue communication without changing legacy experiments."""
 import copy
 import json
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 
@@ -181,6 +183,26 @@ class TeamCommunicationTests(unittest.TestCase):
                 self.assertTrue(env.observation_space(name).contains(obs))
         finally:
             env.close()
+
+    def test_independent_online_flags_and_recorded_replays_are_json_serializable(self):
+        for mode, probability in (("none", 0), ("distance", 0), ("full", .5)):
+            config = self.config(red_communication=CommunicationConfig(mode, 10, probability),
+                                 blue_communication=CommunicationConfig("distance", 10, 0))
+            adapter = SMACAdapter(config=config)
+            try:
+                adapter.env.record_replay = True
+                adapter.reset(seed=42)
+                for _ in range(3):
+                    self.assertTrue(all(type(flag) is bool for flag in adapter.env.core.online.values()))
+                    json.dumps(adapter.env.snapshot())
+                    adapter.step([0, 0])
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "replay.json"
+                    adapter.save_replay(path)
+                    replay = json.loads(path.read_text())
+                    self.assertEqual(len(replay["frames"]), 4)
+            finally:
+                adapter.close()
 
 
 if __name__ == "__main__":

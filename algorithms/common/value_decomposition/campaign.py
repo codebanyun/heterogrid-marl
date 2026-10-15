@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from algorithms.common.experiment_log import write_atomic
-from algorithms.common.sensitivity import PROJECT_ROOT, GROUPS, LABELS, scenarios
+from algorithms.common.sensitivity import PROJECT_ROOT, GROUPS, LABELS, scenarios, communication_protocol
 from algorithms.common.value_decomposition.report import read_json, summarize
 
 
@@ -34,7 +34,7 @@ def prepare(args):
     for name in ("policy", "network", "common"):
         shutil.copytree(args.marl_root / name, backend / name,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    tasks = scenarios()
+    tasks = scenarios(fixed_blue=args.fixed_blue)
     roots = {}
     for alg in args.algorithms:
         root = args.output_root / alg / args.name
@@ -44,6 +44,7 @@ def prepare(args):
             write_atomic(root / "configs" / (name + ".json"), config.to_dict())
         experiment = {"algorithm": alg, "variant": "qtran_base" if alg == "qtran" else alg,
             "created": now(), "seeds": args.seeds, "steps": args.steps, "groups": GROUPS, "labels": LABELS,
+            "communication_protocol": communication_protocol(args.fixed_blue),
             "eval_interval": args.eval_interval, "eval_episodes": args.eval_episodes,
             "heldout_episodes": args.heldout_episodes, "eval_seed": 100042, "heldout_seed": 200042,
             "save_interval": 2_000_000, "primary_model": "final.pt", "selection": "greedy validation win rate then return",
@@ -68,7 +69,9 @@ def prepare(args):
             "训练步不乘智能体数量，不含评估；AUC使用含初始点的梯形积分，归一化AUC除以预算。\n"
             "未达到80%的种子标记null/未达到，不用预算值替代。接敌时间以接敌局为条件。\n"
             "算法来自外部 MARL-Algorithms；目标RNN首帧对齐修正写入每次config.json。\n"
-            "只从头训练；检查点不含回放，当前不支持精确续训。停止管理器会向工作进程转发TERM并保存中断模型。\n",
+            "只从头训练；检查点不含回放，当前不支持精确续训。停止管理器会向工作进程转发TERM并保存中断模型。\n"
+            + ("本轮蓝方固定 distance、半径10、失联0；通信对照只改变红方。C5/C6仍是full拓扑叠加节点失联。\n"
+               if args.fixed_blue else "本轮旧版共享通信参数同时改变双方。\n"),
             encoding="utf-8")
         roots[alg] = str(root)
     jobs = []
@@ -161,7 +164,7 @@ def supervise(coordinator):
                     output = Path(job["output"])
                     output.parent.mkdir(parents=True, exist_ok=True)
                     logfile = (output.parent / f"seed_{job['seed']}.log").open("w", buffering=1)
-                    process = subprocess.Popen(job["command"], cwd=plan["runtime"], env=child_env,
+                    process = subprocess.Popen(job["command"], cwd=job.get("runtime", plan["runtime"]), env=child_env,
                         stdout=logfile, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
                     job.update(pid=process.pid, status="RUNNING", started=now())
                     live[process.pid] = (process, logfile, job)
@@ -200,6 +203,7 @@ def main():
     parser.add_argument("--name", default="20261011_sensitivity_5m")
     parser.add_argument("--marl-root", type=Path, default=os.environ.get("MARL_ALGORITHMS_ROOT"))
     parser.add_argument("--algorithms", nargs="+", choices=("qmix", "qtran"), default=["qmix", "qtran"])
+    parser.add_argument("--fixed-blue", action="store_true", help="Fix blue distance/radius10/no outages; vary red only")
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44])
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     parser.add_argument("--steps", type=int, default=5_000_000)

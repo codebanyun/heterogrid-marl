@@ -47,6 +47,8 @@ class SMACAdapter:
                 "invalid_actions": core.last_metrics["invalid_actions"],
                 "reward_components": dict(core.last_metrics["reward_components"]["red"]),
                 "episode_metrics": dict(core.episode_metrics["red"])}
+        if core.config.diagnostics_enabled:
+            info["team_episode_metrics"] = core.team_episode_metrics()
         if done:
             self._stats["battles_game"] += 1
             self._stats["battles_won"] += int(core.winner == "red")

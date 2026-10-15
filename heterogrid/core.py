@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from .config import EnvConfig, ROLES, RoleStats, UnitSpec
+from .diagnostics import CombatDiagnostics
 
 # Shared action numbering, regardless of role. Dead units only allow WAIT.
 WAIT = 0
@@ -64,6 +65,14 @@ class GridCombat:
         self.online: dict[str, bool] = {}
         self.last_metrics: dict[str, Any] = {}
         self.episode_metrics: dict[str, dict] = {}
+        self.diagnostics = CombatDiagnostics() if config.diagnostics_enabled else None
+        self.reward_scales = {}
+        for team in self.names:
+            enemies = getattr(config, self.enemy_team(team))
+            normalized = config.reward_normalization == "reference"
+            self.reward_scales[team] = {
+                "damage": config.reward_reference_team_hp / sum(config.role_stats[u.role].hp for u in enemies) if normalized else 1.0,
+                "kill": config.reward_reference_team_size / len(enemies) if normalized else 1.0}
 
     @staticmethod
     def enemy_team(team: str):
@@ -115,6 +124,8 @@ class GridCombat:
         if self.config.target_sharing == "auto":
             for team in self.names:
                 self.share_visible_targets(team, reward_reports=False)
+        if self.diagnostics is not None:
+            self.diagnostics.reset(self)
 
     def _sample_network(self):
         # A random node outage applies to both send and receive, for one decision tick.
@@ -126,8 +137,8 @@ class GridCombat:
                 # the other team's configuration nor early deaths shift this stream.
                 draws = self._communication_rng[team].random(len(names))
                 for name, draw in zip(names, draws):
-                    self.online[name] = (self.units[name].alive and config.mode != "none" and
-                                         draw >= config.dropout_probability)
+                    self.online[name] = bool(self.units[name].alive and config.mode != "none" and
+                                             draw >= config.dropout_probability)
             return
         # No overrides: preserve historical RNG consumption and trajectories exactly.
         probability = self.config.dropout_probability if self.config.communication == "random" else 0.0
@@ -355,6 +366,8 @@ class GridCombat:
                 damage[target_name] += unit.stats.damage
             self.last_attacks.append({"attacker": name, "target": target_name, "origin": unit.position.tolist(),
                                       "aim": aim.tolist(), "hit": bool(hit)})
+        if self.diagnostics is not None:
+            self.diagnostics.record_attacks(self, actions, invalid)
         # Fire from the shared start-of-tick snapshot. All damage is applied together.
         actual_damage = {"red": 0.0, "blue": 0.0}
         kills = {"red": 0, "blue": 0}
@@ -399,8 +412,8 @@ class GridCombat:
             metrics["kills"] += kills[team]
             components[team]["time"] = -self.config.time_penalty
             if self.config.reward_mode == "dense":
-                components[team]["damage"] = self.config.damage_reward * actual_damage[team]
-                components[team]["kill"] = self.config.kill_reward * kills[team]
+                components[team]["damage"] = self.config.damage_reward * actual_damage[team] * self.reward_scales[team]["damage"]
+                components[team]["kill"] = self.config.kill_reward * kills[team] * self.reward_scales[team]["kill"]
                 remaining = max(0.0, self.config.information_reward_cap - metrics["information_reward"])
                 for kind, weight in (("discovery", self.config.discovery_reward), ("sharing", self.config.sharing_reward)):
                     bonus = min(remaining, events[team][kind] * weight)
@@ -419,7 +432,16 @@ class GridCombat:
         self.last_metrics = {"damage": actual_damage, "kills": kills, "died": died, "invalid_actions": invalid,
                              "team_rewards": rewards, "reward_components": components,
                              "information_events": events, "winner": self.winner, "reason": self.reason}
+        if self.diagnostics is not None:
+            self.diagnostics.record_state(self)
         return rewards, self.last_metrics
+
+    def team_episode_metrics(self):
+        result = {team: dict(metrics) for team, metrics in self.episode_metrics.items()}
+        if self.diagnostics is not None:
+            for team in result:
+                result[team]["diagnostics"] = self.diagnostics.metrics(self, team)
+        return result
 
     def snapshot(self):
         """Privileged data for rendering/replays; never feed this into a deployed actor."""
@@ -427,7 +449,7 @@ class GridCombat:
                 "max_steps": self.config.max_steps, "finished": self.finished,
                 "winner": self.winner, "reason": self.reason, "returns": dict(self.episode_returns),
                 "reward_components": self.last_metrics.get("reward_components", {}),
-                "episode_metrics": {t: dict(m) for t, m in self.episode_metrics.items()},
+                "episode_metrics": self.team_episode_metrics(),
                 "communication": self.config.communication,
                 "independent_communication": self._independent_communication,
                 "team_communication": {t: asdict(c) for t, c in self.team_communication.items()},

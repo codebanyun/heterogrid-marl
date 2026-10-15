@@ -35,7 +35,7 @@ class ScenarioConfigTests(unittest.TestCase):
 
     def test_all_configs_are_distinct_and_support_legal_rollouts(self):
         paths = sorted((ROOT / "configs").rglob("*.json"))
-        self.assertEqual(len(paths), 6)
+        self.assertGreaterEqual(len(paths), 6)
         expanded = []
         for path in paths:
             with self.subTest(config=path.name):

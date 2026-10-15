@@ -8,6 +8,7 @@ import torch
 from heterogrid import SMACAdapter
 from heterogrid.core import REWARD_COMPONENTS
 from heterogrid.smac import flatten_observation
+from algorithms.common.diagnostics import summarize_team_metrics
 
 
 def write_json(path, value):
@@ -68,6 +69,8 @@ def evaluate(policy, args, config, directory, episodes, seed, deterministic, sav
                    "length": env.env.core.step_count, "winner": info["winner"],
                    "reason": info["termination_reason"], "invalid_red_actions": invalid,
                    "reward_components": component_totals, **info["episode_metrics"]}
+            if "team_episode_metrics" in info:
+                row["team_episode_metrics"] = info["team_episode_metrics"]
             rows.append(row)
             if record_episode:
                 replay = Path(env.save_replay(directory / f"episode_{episode:03d}.json"))
@@ -95,7 +98,7 @@ def evaluate(policy, args, config, directory, episodes, seed, deterministic, sav
               "mean_useful_reports": float(np.mean([r["useful_reports"] for r in rows])),
               "mean_reward_components": {k: float(np.mean([r["reward_components"][k] for r in rows])) for k in REWARD_COMPONENTS},
               "invalid_red_actions": sum(r["invalid_red_actions"] for r in rows),
-              "results": rows}
+              **summarize_team_metrics(rows), "results": rows}
     if save_summary:
         write_json(directory / "summary.json", result)
     print(json.dumps({"training_seed": args.seed, "evaluation": directory.name,

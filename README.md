@@ -42,6 +42,11 @@ env.close()
 
 红方各节点收到相同的团队奖励，统计团队回报时只计一次，不能对节点奖励再次求和。执行策略只能使用局部观测；全局 `state()` 供集中式训练使用。
 
+规模实验新增三个可选控制：以6v6为参考的伤害/击杀奖励归一化、近似固定密度场景生成器、双方协作与攻击诊断。
+旧配置默认仍为 `reward_normalization="none"`、`diagnostics_enabled=false`，原N组及历史输出不变。
+可直接使用 `configs/scaling/` 的3/6/9/12人场景；配置命令、公式及指标读取见
+[规模实验配置](configs/README.md#规模实验的新增控制项)与[完整环境说明](docs/environment.md#密度受控的规模对照)。
+
 ## 环境设置
 
 通过 `EnvConfig` 设置任务，然后传给 `parallel_env(config=...)`；AEC 接口和 `SMACAdapter` 也接受同一配置。下面创建一个 **16×16×4、红方 4 个节点对蓝方 3 个节点、规则蓝方、距离通信** 的环境：

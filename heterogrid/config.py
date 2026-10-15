@@ -99,6 +99,10 @@ class EnvConfig:
     # None inherits the legacy shared settings. An override is a complete config.
     red_communication: CommunicationConfig | None = None
     blue_communication: CommunicationConfig | None = None
+    reward_normalization: str = "none"  # none or reference; damage/kill only
+    reward_reference_team_size: int = 6
+    reward_reference_team_hp: float = 480.0
+    diagnostics_enabled: bool = False
 
     def __post_init__(self):
         if len(self.map_size) != 3 or any(type(n) is not int or not 1 <= n < 2**31 for n in self.map_size):
@@ -118,6 +122,15 @@ class EnvConfig:
             raise ValueError("Unknown communication mode")
         if self.target_sharing not in ("manual", "auto") or self.reward_mode not in ("dense", "sparse"):
             raise ValueError("Invalid target_sharing or reward_mode")
+        if self.reward_normalization not in ("none", "reference"):
+            raise ValueError("reward_normalization must be none or reference")
+        if type(self.reward_reference_team_size) is not int or self.reward_reference_team_size < 1:
+            raise ValueError("reward_reference_team_size must be a positive integer")
+        hp = self.reward_reference_team_hp
+        if isinstance(hp, bool) or not isinstance(hp, (int, float)) or not math.isfinite(hp) or hp <= 0:
+            raise ValueError("reward_reference_team_hp must be finite and positive")
+        if type(self.diagnostics_enabled) is not bool:
+            raise ValueError("diagnostics_enabled must be a boolean")
         if not math.isfinite(self.comm_radius) or self.comm_radius < 0:
             raise ValueError("comm_radius must be finite and nonnegative")
         if not math.isfinite(self.dropout_probability) or not 0 <= self.dropout_probability <= 1:

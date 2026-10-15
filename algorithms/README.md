@@ -34,3 +34,29 @@
 6. 将单元测试放入 `tests/integrations/<算法名>/`。短训练只能验证链路，不能作为收敛证明。
 
 训练和评估的终止处理、奖励复制、死亡掩码等契约见[环境文档](../docs/environment.md)。
+
+## 固定蓝方通信的四算法实验
+
+下面创建四算法合计156个任务（各13场景×42/43/44），每次从头5M团队环境步。
+蓝方在全部场景固定 `distance`、半径10、失联0；C1–C6只改变红方通信。
+M/N场景仍按原矩阵改变地图/双方人数，不固定蓝方人数或对战中的行为轨迹。
+C5/C6沿用旧实验的 `full` 拓扑叠加25%/50%节点失联，并非距离拓扑叠加失联。
+红蓝使用独立通信随机流。角色能力、规则策略、奖励、自动共享和算法超参数不变。
+
+```bash
+python -m algorithms.common.fixed_blue_campaign \
+  --marl-root /path/to/MARL-Algorithms --epymarl-root /path/to/epymarl \
+  --name fixed_blue_sensitivity_5m --workers 48
+nohup setsid -f python -u -m algorithms.common.fixed_blue_campaign \
+  --run output/campaigns/fixed_blue_sensitivity_5m_all \
+  > output/campaigns/fixed_blue_sensitivity_5m_all/nohup.log 2>&1 < /dev/null
+```
+
+一个共享管理器跨四算法动态填满 `--workers` 个槽位；每个进程一个CPU线程，
+每次训练仍4个环境，不随排队或资源改变超参数。
+`output/<算法名>/<实验名>/` 保存各自数据与自动汇总；`experiment.json` 的
+`communication_protocol` 和展开的 `configs/` 标明本轮为单边通信干预。
+`output/campaigns/<实验名>_all/status.json` 是统一队列状态与实际PID。
+另外两个算法家族目录只保存冻结源码与原始计划（`DELEGATED`），不启动额外管理器。
+验证/独立测试与模型保存预算沿用各算法原设置，不按胜率提前停止，不覆盖历史数据。
+也可以在原来的双算法准备命令中加 `--fixed-blue`，只运行对应家族。

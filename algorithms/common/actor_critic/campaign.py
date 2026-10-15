@@ -9,7 +9,7 @@ from pathlib import Path
 
 from algorithms.common.actor_critic.backend import algorithm_settings
 from algorithms.common.experiment_log import write_atomic
-from algorithms.common.sensitivity import PROJECT_ROOT, GROUPS, LABELS, scenarios
+from algorithms.common.sensitivity import PROJECT_ROOT, GROUPS, LABELS, scenarios, communication_protocol
 from algorithms.common.value_decomposition.campaign import now, supervise
 from algorithms.common.value_decomposition.report import summarize
 
@@ -37,7 +37,7 @@ def prepare(args):
         original = args.epymarl_root.parent / name
         if original.exists():
             shutil.copy2(original, backend / name)
-    tasks, roots = scenarios(), {}
+    tasks, roots = scenarios(fixed_blue=args.fixed_blue), {}
     for algorithm in args.algorithms:
         root = args.output_root / algorithm / args.name
         root.mkdir(parents=True)
@@ -46,6 +46,7 @@ def prepare(args):
             write_atomic(root / "configs" / (name + ".json"), config.to_dict())
         experiment = {"algorithm": algorithm, "variant": "centralized V" if algorithm == "maa2c" else "counterfactual Q",
             "created": now(), "seeds": args.seeds, "steps": args.steps, "groups": GROUPS, "labels": LABELS,
+            "communication_protocol": communication_protocol(args.fixed_blue),
             "eval_interval": args.eval_interval, "eval_episodes": args.eval_episodes,
             "heldout_episodes": args.heldout_episodes, "eval_seed": 100042, "heldout_seed": 200042,
             "save_interval": 2_000_000, "primary_model": "final.pt", "selection": "greedy validation win rate then return",
@@ -71,7 +72,9 @@ def prepare(args):
             "figures/为三组胜率均值±SEM曲线及源CSV，只使用三个seed共有的真实验证点，无平滑/插值。\n"
             "AUC含初始验证点，未达80%标记null，不根据SEM重叠判断显著性。\n"
             "status.json与run_status.csv记录进度；管理器接收TERM会转发给worker保存中断模型。\n"
-            "从头训练，不自动覆盖输出，不支持精确续训。\n", encoding="utf-8")
+            "从头训练，不自动覆盖输出，不支持精确续训。\n"
+            + ("本轮蓝方固定 distance、半径10、失联0；通信对照只改变红方。C5/C6仍是full拓扑叠加节点失联。\n"
+               if args.fixed_blue else "本轮旧版共享通信参数同时改变双方。\n"), encoding="utf-8")
         roots[algorithm] = str(root)
     jobs = []
     order = sorted(tasks, key=lambda name: (-len(tasks[name].red), -sum(tasks[name].map_size)))
@@ -104,6 +107,7 @@ def main():
     parser.add_argument("--name", default="20261012_sensitivity_5m")
     parser.add_argument("--epymarl-root", type=Path, default=os.environ.get("EPYMARL_ROOT"))
     parser.add_argument("--algorithms", nargs="+", choices=("maa2c", "coma"), default=["maa2c", "coma"])
+    parser.add_argument("--fixed-blue", action="store_true", help="Fix blue distance/radius10/no outages; vary red only")
     parser.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44])
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     parser.add_argument("--steps", type=int, default=5_000_000)

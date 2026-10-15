@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from algorithms.common.experiment_log import ExperimentRecorder, write_atomic
+from algorithms.common.diagnostics import summarize_team_metrics
 from algorithms.common.sensitivity import PROJECT_ROOT
 from algorithms.common.value_decomposition.backend import act, build_policy, modules
 from algorithms.common.value_decomposition.replay import EpisodeReplay
@@ -36,7 +37,8 @@ def episode_row(env, seed, total, components):
     return {"seed": int(seed), "return": total, "length": core.step_count,
             "winner": core.winner, "reason": core.reason, **info,
             "kill_fraction": info["kills"] / len(core.names["blue"]),
-            "reward_components": dict(components)}
+            "reward_components": dict(components),
+            **({"team_episode_metrics": core.team_episode_metrics()} if core.config.diagnostics_enabled else {})}
 
 
 def aggregate(rows):
@@ -48,7 +50,7 @@ def aggregate(rows):
             **{"mean_" + key: float(np.mean([r[key] for r in rows])) for key in
                ("return", "length", "damage", "kills", "kill_fraction", "useful_reports", "discovered_targets")},
             "mean_reward_components": {k: float(np.mean([r["reward_components"][k] for r in rows]))
-                                       for k in REWARD_COMPONENTS}, "results": rows}
+                                       for k in REWARD_COMPONENTS}, **summarize_team_metrics(rows), "results": rows}
 
 
 def evaluate(policy, config, output, episodes, base_seed, epsilon=0.0, replays=0):
@@ -174,7 +176,8 @@ def main(algorithm=None):
     (cli.output / "models").mkdir()
     sources = list((PROJECT_ROOT / "heterogrid").glob("*.py"))
     sources += list(Path(__file__).parent.glob("*.py"))
-    sources += [PROJECT_ROOT / "algorithms/common/sensitivity.py", PROJECT_ROOT / "algorithms/common/experiment_log.py", cli.config]
+    sources += [PROJECT_ROOT / "algorithms/common/sensitivity.py", PROJECT_ROOT / "algorithms/common/experiment_log.py",
+                PROJECT_ROOT / "algorithms/common/diagnostics.py", cli.config]
     sources += [cli.marl_root / p for p in ("policy/qmix.py", "policy/qtran_base.py", "network/base_net.py",
                 "network/qmix_net.py", "network/qtran_net.py", "common/arguments.py")]
     metadata = {"name": cli.algorithm, "framework": "MARL-Algorithms external learner",

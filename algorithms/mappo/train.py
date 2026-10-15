@@ -268,6 +268,8 @@ def main():
                                    "length": env.env.core.step_count, "reason": info["termination_reason"],
                                    "reward_components": {k: float(episode_components[k][i]) for k in REWARD_COMPONENTS},
                                    **info["episode_metrics"]}
+                            if "team_episode_metrics" in info:
+                                row["team_episode_metrics"] = info["team_episode_metrics"]
                             episodes.append(row)
                             episode_log.write(json.dumps(row, allow_nan=False) + "\n")
                             episode_returns[i] = 0

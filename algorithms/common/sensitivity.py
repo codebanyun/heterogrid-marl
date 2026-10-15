@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from heterogrid import EnvConfig, UnitSpec
+from heterogrid import CommunicationConfig, EnvConfig
+from heterogrid.scenarios import balanced_roster
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GROUPS = {"map_size": ["B0", "M1", "M2", "M3"],
@@ -16,17 +17,7 @@ LABELS = {"B0": "Baseline: 24x24x6, 6v6, radius 10", "M1": "12x12x3",
           "C4": "Radius 15", "C5": "Random outage 0.25", "C6": "Random outage 0.50"}
 
 
-def balanced_roster(count):
-    if count < 3 or count % 3:
-        raise ValueError("Roster size must be a positive multiple of three")
-    # Preserve the baseline's unit IDs, roles and platform labels exactly.
-    roles = ("scout", "strike", "hybrid")
-    platforms = (("uav", "usv"), ("robot", "robot_dog"), ("uav", "robot_dog"))
-    return [UnitSpec(role, platforms[r][i % 2]) for r, role in enumerate(roles)
-            for i in range(count // 3)]
-
-
-def scenarios():
+def scenarios(fixed_blue=False):
     baseline = EnvConfig.load(PROJECT_ROOT / "configs/scenarios/6v6_rule_distance.json")
     tasks = {"B0": baseline}
     for name, size in (("M1", (12, 12, 3)), ("M2", (36, 36, 9)), ("M3", (48, 48, 12))):
@@ -38,4 +29,20 @@ def scenarios():
                  C3=replace(baseline, comm_radius=5.0), C4=replace(baseline, comm_radius=15.0),
                  C5=replace(baseline, communication="random", dropout_probability=0.25),
                  C6=replace(baseline, communication="random", dropout_probability=0.50))
+    if fixed_blue:
+        blue = CommunicationConfig(mode="distance", radius=10.0, dropout_probability=0.0)
+        # Resolve the old red treatment first, then neutralize shared fields so
+        # each communication contrast differs in red_communication only.
+        tasks = {name: replace(config, communication=baseline.communication,
+                    comm_radius=baseline.comm_radius, dropout_probability=baseline.dropout_probability,
+                    red_communication=config.communication_for("red"), blue_communication=blue)
+                 for name, config in tasks.items()}
     return tasks
+
+
+def communication_protocol(fixed_blue=False):
+    return {"scope": "red_only" if fixed_blue else "both_teams",
+            "blue_fixed": {"mode": "distance", "radius": 10.0, "dropout_probability": 0.0}
+                          if fixed_blue else None,
+            "outage_topology": "full", "outage_unit": "node_per_tick",
+            "independent_team_rng": bool(fixed_blue)}

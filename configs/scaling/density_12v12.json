@@ -1,0 +1,132 @@
+{
+  "map_size": [
+    30,
+    30,
+    8
+  ],
+  "red": [
+    {
+      "role": "scout",
+      "platform": "uav"
+    },
+    {
+      "role": "scout",
+      "platform": "usv"
+    },
+    {
+      "role": "scout",
+      "platform": "uav"
+    },
+    {
+      "role": "scout",
+      "platform": "usv"
+    },
+    {
+      "role": "strike",
+      "platform": "robot"
+    },
+    {
+      "role": "strike",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "strike",
+      "platform": "robot"
+    },
+    {
+      "role": "strike",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "hybrid",
+      "platform": "uav"
+    },
+    {
+      "role": "hybrid",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "hybrid",
+      "platform": "uav"
+    },
+    {
+      "role": "hybrid",
+      "platform": "robot_dog"
+    }
+  ],
+  "blue": [
+    {
+      "role": "scout",
+      "platform": "uav"
+    },
+    {
+      "role": "scout",
+      "platform": "usv"
+    },
+    {
+      "role": "scout",
+      "platform": "uav"
+    },
+    {
+      "role": "scout",
+      "platform": "usv"
+    },
+    {
+      "role": "strike",
+      "platform": "robot"
+    },
+    {
+      "role": "strike",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "strike",
+      "platform": "robot"
+    },
+    {
+      "role": "strike",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "hybrid",
+      "platform": "uav"
+    },
+    {
+      "role": "hybrid",
+      "platform": "robot_dog"
+    },
+    {
+      "role": "hybrid",
+      "platform": "uav"
+    },
+    {
+      "role": "hybrid",
+      "platform": "robot_dog"
+    }
+  ],
+  "max_steps": 200,
+  "opponent": "rule",
+  "communication": "distance",
+  "comm_radius": 10,
+  "target_sharing": "auto",
+  "scripted_target_sharing": false,
+  "timeout_as_loss": true,
+  "time_penalty": 0.005,
+  "discovery_reward": 0.05,
+  "sharing_reward": 0.05,
+  "information_reward_cap": 1,
+  "reward_normalization": "reference",
+  "reward_reference_team_size": 6,
+  "reward_reference_team_hp": 480,
+  "diagnostics_enabled": true,
+  "red_communication": {
+    "mode": "distance",
+    "radius": 10,
+    "dropout_probability": 0
+  },
+  "blue_communication": {
+    "mode": "distance",
+    "radius": 10,
+    "dropout_probability": 0
+  }
+}

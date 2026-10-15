@@ -157,6 +157,47 @@ python -m heterogrid.rollout --opponent pretrained \
 
 原始共享团队奖励：有效伤害每点 +0.01，首次击败单元 +1，获胜 +10，失败 -10。过量伤害按目标剩余生命值截断。双方同时全灭时为平局；稠密模式仍保留该步实际伤害和击败奖励。`reward_mode='sparse'` 时关闭伤害、击杀和情报奖励；显式设置的 `time_penalty` 仍然生效，默认值 0 保持原始稀疏奖励行为。
 
+### 可选的规模奖励归一化
+
+`reward_normalization="none"`（默认）完全保留历史奖励。设为 `"reference"` 时，
+只缩放**有效伤害**和**击杀**分量；双方各自以其敌方初始阵容为分母：
+
+```text
+damage_component = damage_reward × 本步有效伤害 × reward_reference_team_hp / 敌方初始总HP
+kill_component   = kill_reward   × 本步击杀数   × reward_reference_team_size / 敌方初始人数
+```
+
+默认参考值为6人、480HP（默认角色能力下的平衡6v6）。默认6v6的两个缩放因子都是1；
+平衡3v3为2，9v9为2/3，12v12为1/2。因此消灭全部敌人的伤害+击杀奖励上限
+均为 `0.01×480+1×6=10.8`。不按当前存活人数/HP更新分母，不按回合最大回报或统计量归一化。
+非对称阵容也支持：红方使用蓝方初始阵容，蓝方使用红方初始阵容；总HP由阵容和 `role_stats` 计算。
+若自定义了角色HP，应显式指定希望对齐的参考总HP，默认480不会自动改变。
+
+```python
+from dataclasses import replace
+from heterogrid import EnvConfig
+
+base = EnvConfig.load("configs/scenarios/6v6_rule_distance.json")
+normalized = replace(base, reward_normalization="reference",
+                     reward_reference_team_size=6, reward_reference_team_hp=480.0)
+```
+
+JSON 顶层对应字段为：
+
+```json
+{
+  "reward_normalization": "reference",
+  "reward_reference_team_size": 6,
+  "reward_reference_team_hp": 480.0,
+  "diagnostics_enabled": true
+}
+```
+
+该片段只展示新增字段，**不会继承学习基线的其他奖励设置**。
+胜负、超时失败、时间成本、发现/共享奖励及情报上限全部不缩放；`sparse` 模式仍关闭稠密分量。
+`episode_metrics.damage/kills` 仍是原始物理量，`reward_components` 是实际发放的（可能已缩放）奖励。
+这不同于算法内部的 reward/return standardisation，比较算法时应统一环境字段并固定算法端设置。
+
 可配置的情报奖励用于缩短发现、共享到打击之间的反馈距离：
 
 - `discovery_reward`：同一敌人第一次被本队任意存活节点直接观察时奖励；按团队、敌人和整局去重。反复进出视野、记录过期或换一个观察者都不能再次领取。初始可见目标计入发现统计，但不发初始奖励；不奖励尸体。
@@ -178,6 +219,101 @@ env = parallel_env(config=config)
 ```
 
 支持自定义 role_stats，但一次实验内阵容固定，不动态增援／改变观测维度。不同阵容创建不同环境。
+
+## 密度受控的规模对照
+
+原有 N1/B0/N2/N3 的固定地图实验保留不变，它同时改变人数和单位密度。
+新增 `configs/scaling/density_{3,6,9,12}v{3,6,9,12}.json` 四个独立场景，
+开启参考奖励归一化和诊断，保持规则蓝方、双方1:1:1、200步、双方半径10无失联和原学习奖励。
+
+| 每方人数 | 地图 | 单队节点/网格密度相对6v6 |
+|---|---|---:|
+| 3 | 19×19×5 | 0.9573 |
+| 6 | 24×24×6 | 1.0000 |
+| 9 | 27×27×7 | 1.0159 |
+| 12 | 30×30×8 | 0.9600 |
+
+以6v6为参考，三个地图维度乘 `(人数/6)^(1/3)`，四舍五入至最近正整数（.5向上）。
+密度按网格数 `X×Y×Z` 计算，不按 `(X-1)×(Y-1)×(Z-1)`；整数取整带来小幅误差。
+初始出生区域仍按原规则位于X方向两侧各约1/4地图，未更改出生、角色或运动代码。
+它控制的是近似总体空间密度，**不保证相同初始距离、通信度数、边界效应或任务难度**；
+特别是地图变大后行进距离也变大。视野、射程、通信半径、单步位移和时间上限一律不随地图放大。
+
+可以通过环境自带生成器，从任意平衡基准分别生成固定地图和近似固定密度两组：
+
+```bash
+python -m heterogrid.scenarios \
+  --base configs/scaling/density_6v6.json --mode fixed_map \
+  --counts 3 6 9 12 --output output/scaling_configs/fixed_map
+python -m heterogrid.scenarios \
+  --base configs/scaling/density_6v6.json --mode constant_density \
+  --counts 3 6 9 12 --output output/scaling_configs/constant_density
+```
+
+生成器只改变双方平衡阵容和（密度模式）地图大小；基准人数取 `--base` 的阵容长度。
+所有其他字段完整展开并保留。可显式加 `--reward-normalization none|reference` 和 `--diagnostics`；
+不传时保留基准对应字段。输出目录必须不存在，不覆盖历史配置；每个JSON独立加载，README记录实际密度。
+Python 对应接口为 `heterogrid.scenarios.scaling_scenarios(base, counts=(3,6,9,12), mode="constant_density")`。
+
+所有算法都能用 `--config` 指向这些JSON。旧13场景队列**不会自动替换N组**，生成器也不启动训练。
+建议分别报告“固定地图”与“密度受控”两组，不把不同奖励/地图协议混成一条人数曲线。
+
+## 双方协作与攻击诊断（默认关闭）
+
+设 `diagnostics_enabled=true` 才启用额外统计，默认不增加诊断采样开销。
+诊断不改变物理、奖励、随机数抽样、规则策略或观测/动作/state维度。
+它会读取真实坐标和存活状态，属于**特权日志数据，不能作为执行actor输入**。
+蓝方策略收到的 `act(observations, infos)` 不附带这些全局诊断。
+
+```python
+from dataclasses import replace
+from heterogrid import EnvConfig, SMACAdapter
+
+config = replace(EnvConfig.load("configs/scaling/density_6v6.json"), diagnostics_enabled=True)
+env = SMACAdapter(config=config)
+env.reset(seed=42)
+initial = env.env.episode_metrics()  # reset后也能读取双方初始数据
+reward, done, info = env.step([0] * env.n_agents)
+red = info["team_episode_metrics"]["red"]
+blue = info["team_episode_metrics"]["blue"]
+print(red["diagnostics"], blue["diagnostics"])
+env.close()
+```
+
+Parallel 接口的 `step` 返回的各红方info也附带同一个 `team_episode_metrics`；
+`parallel_env.episode_metrics()` 可在reset后任意读取。快照/回放每帧的
+`episode_metrics.red/blue.diagnostics` 保存对应时刻的累计值。
+SMAC 原有 `info.episode_metrics` 仍为旧版红方基础指标，不增加嵌套字段；新双方字段单独提供。
+
+诊断 `schema_version=1`，指标定义如下：
+
+| 字段 | 定义 |
+|---|---|
+| `state_samples` | reset初始状态一次，加每次step结算后的状态一次，含终局；T步共T+1次 |
+| `initial_agents`、`initial_team_density` | 本队初始人数、人数/地图网格数 |
+| `initial_mean_nearest_enemy_distance` | 初始每个己方节点到最近敌人的三维欧氏距离，再对己方取均值；使用真实坐标，仅供诊断 |
+| `initial_comm_degree`、`mean_comm_degree` | 每状态对存活节点计算实际在线通信邻居数均值，再对状态等权平均；失联存活节点记0，全队死亡记0；initial是初始值 |
+| `initial_comm_degree_fraction`、`mean_comm_degree_fraction` | 上述度数除以当时存活人数减1；不足2名存活时该状态未定义 |
+| `initial_scout_coverage_fraction`、`mean_scout_coverage_fraction` | 存活敌人中被至少一个存活侦察节点直接看到的比例，不含转发/缓存目标；没有侦察节点而有敌人时记0，无存活敌人时未定义 |
+| `initial_strike_scout_link_fraction`、`mean_strike_scout_link_fraction` | 存活打击节点中，与至少一个存活侦察节点有直接可用链路的比例；没有打击节点时未定义，无侦察节点时记0 |
+| `initial_alive_fraction`、`mean_alive_fraction`、`final_alive_fraction` | 存活数/本队初始人数；分别为初始、状态等权均值、当前状态（终局时为最终值） |
+| `final_alive_by_role` | 当前/最终各角色存活人数；在回放中逐帧可读取存活曲线 |
+| `useful_reports_per_initial_agent`、`useful_reports_per_initial_combat_agent` | 基础有效报告数除以初始人数、初始有攻击能力人数；仍可读取基础指标原始报告数 |
+| `attack_attempts`、`invalid_attack_attempts` | 请求攻击的次数；其中被合法动作掩码拒绝、按WAIT执行的次数，不含普通非法移动 |
+| `executed_attacks`、`hit_attacks`、`missed_attacks` | 合法且实际执行的射击次数、命中次数、落空次数；缓存坐标与目标真实坐标不符或目标已死会落空 |
+| `ineffective_attack_attempts` | 非法攻击请求+已执行但落空的攻击；不把部分过量集火重复算入次数 |
+| `raw_hit_damage`、`effective_damage`、`overkill_damage` | 命中攻击的名义伤害、按目标步初HP截断后的实际伤害、两者差；同一步同一目标的所有命中伤害先合并再算过量，避免按攻击顺序归因 |
+| `invalid_attack_rate`、`attack_hit_rate`、`overkill_fraction` | 非法攻击/请求攻击，命中/执行攻击，过量伤害/名义命中伤害 |
+
+所有 `mean_*` 状态指标仅对定义有效的状态取均值，不因为重复观察、读日志或交换消息而多采样。
+分母为0的比例使用JSON `null`，不写NaN、不伪装成0；没有射击与射击全部落空是两种不同情况。
+有效伤害、击杀、接敌时间、发现数、有效报告数等基础 `episode_metrics` 仍分别提供给双方。
+
+QMIX/QTRAN/MAA2C/COMA的逐局训练记录与验证/独立测试 `summary.json.results` 会保存双方字段；
+测试汇总另有 `mean_team_episode_metrics`（各局等权均值）和
+`team_episode_metrics_observed_episodes`（逐指标非null局数）。MAPPO/SMPE共用的独立评估也保存同一结构；
+MAPPO逐局训练日志同样透传双方数据。不同指标有效局数可能不同，不将缺失值填0。
+诊断开关、归一化字段与完整配置都随实验配置/检查点/回放保存；不能用新指标冒充旧实验已有记录。
 
 ## Linux 训练与本地浏览器查看
 

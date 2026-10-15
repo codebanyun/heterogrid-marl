@@ -137,6 +137,10 @@ class HeteroGridParallelEnv(ParallelEnv):
         self.agents = [n for n in acting if not terminations[n] and not truncations[n]]
         # Final observations are returned for agents that died/terminated on this step.
         observations, infos = self._observe(acting)
+        if self.config.diagnostics_enabled:
+            team_metrics = self.core.team_episode_metrics()
+            for info in infos.values():
+                info["team_episode_metrics"] = team_metrics
         for name in metrics["invalid_actions"]:
             if name in infos:
                 infos[name]["invalid_action"] = True
@@ -165,6 +169,11 @@ class HeteroGridParallelEnv(ParallelEnv):
     def snapshot(self):
         self._require_reset()
         return self.core.snapshot()
+
+    def episode_metrics(self):
+        """Privileged red/blue logging data, never an execution observation."""
+        self._require_reset()
+        return self.core.team_episode_metrics()
 
     def save_replay(self, path):
         self._require_reset()

@@ -12,6 +12,7 @@
 | `scenarios/3v3_compact.json` | 6×6×3、3v3、静止但可还击的蓝方、全连接通信，适合快速流程检查 |
 | `ablations/6v6_shared.json` | 6v6 基础任务，双方自动共享，保留基础奖励 |
 | `ablations/6v6_terminal.json` | 在共享设置上增加超时失败与每步 0.005 时间成本，不加情报奖励 |
+| `scaling/density_3v3.json`、`density_6v6.json`、`density_9v9.json`、`density_12v12.json` | 新版密度受控规模场景；19×19×5、24×24×6、27×27×7、30×30×8，开启参考奖励归一化和双方诊断；双方距离通信半径10、无失联 |
 
 `6v6_rule_distance.json` 同时作为消融的情报奖励组，不再保存重复的 `shaped` 配置。各配置独立加载，不存在文件继承；省略的字段使用 `EnvConfig` 默认值。实验记录必须保存 `config.to_dict()` 的完整展开结果，避免未来默认值变化影响复现。
 
@@ -83,7 +84,38 @@ env = SMACAdapter(config=red_outage50)
 
 只要启用任一队独立对象，通信采样便采用红蓝分离的随机数流；每步对全部固定槽位取样，死亡或无通信不改变后续抽样位置。在相同seed、决策步和蓝方存活条件下，改变红方通信不会扰动蓝方的失联采样。未启用独立对象时沿用旧采样方式，保留旧seed轨迹。
 
-所有算法的单次训练入口都可通过 `--config` 加载此类配置；原有灵敏度任务生成器仍保留旧版双边矩阵，不会自动变成新的单边实验。已有模型、输出配置和冻结源码不会改写。
+所有算法的单次训练入口都可通过 `--config` 加载此类配置；原有灵敏度任务生成器默认仍保留旧版双边矩阵，需显式使用 `--fixed-blue` 或四算法固定蓝方入口才切换单边实验。已有模型、输出配置和冻结源码不会改写。
+
+## 规模实验的新增控制项
+
+这些都是环境JSON顶层字段，默认值保持旧任务行为：
+
+| 字段 | 默认值 | 配置方法 |
+|---|---|---|
+| `reward_normalization` | `"none"` | `"reference"` 仅归一化伤害和击杀；不缩放终局、时间或情报奖励 |
+| `reward_reference_team_size` | `6` | 正整数；击杀缩放因子=参考人数/敌方初始人数 |
+| `reward_reference_team_hp` | `480.0` | 正有限数；伤害缩放因子=参考HP/敌方初始总HP |
+| `diagnostics_enabled` | `false` | 严格布尔值；启用双方通信、侦察覆盖、存活、无效攻击和过量集火诊断 |
+
+分母按每个评分队伍的敌方初始阵容固定，不随死亡更新。自定义角色HP后，480仍是显式参考值，不自动改变。
+`scaling/` 中的四个场景是独立JSON，不依赖文件继承，适合直接传给任何算法的 `--config`。
+它们不替换旧N组；旧数据与新协议应分开保存和报告。
+
+从同一基准生成一对固定地图/近似固定密度对照：
+
+```bash
+python -m heterogrid.scenarios --base configs/scaling/density_6v6.json \
+  --mode fixed_map --counts 3 6 9 12 --output output/scaling_configs/fixed_map
+python -m heterogrid.scenarios --base configs/scaling/density_6v6.json \
+  --mode constant_density --counts 3 6 9 12 --output output/scaling_configs/constant_density
+```
+
+输出目录必须是新目录，包含完整展开的各场景JSON和密度README；不会启动训练。
+生成器保留基准的归一化/诊断设置；从旧基准出发时可额外传
+`--reward-normalization reference --diagnostics`。它不放大视野、射程、通信半径或200步时限。
+整数网格仅近似保持人数/体积密度，地图变大仍会改变行进距离。
+完整公式、指标字段、接口读取与信息边界见[环境说明](../docs/environment.md#可选的规模奖励归一化)
+及[双方诊断](../docs/environment.md#双方协作与攻击诊断默认关闭)。
 
 ## 自定义 JSON 场景
 

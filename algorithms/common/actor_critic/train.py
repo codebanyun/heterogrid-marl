@@ -123,7 +123,8 @@ def main(algorithm=None):
     sources = list((PROJECT_ROOT / "heterogrid").glob("*.py"))
     sources += list(Path(__file__).parent.glob("*.py"))
     sources += [PROJECT_ROOT / p for p in ("algorithms/common/sensitivity.py",
-                "algorithms/common/experiment_log.py", "algorithms/common/value_decomposition/train.py")]
+                "algorithms/common/experiment_log.py", "algorithms/common/diagnostics.py",
+                "algorithms/common/value_decomposition/train.py")]
     sources += [cli.config]
     for name in ("learners", "controllers", "modules", "components", "utils"):
         sources += list((cli.epymarl_root / name).rglob("*.py"))
