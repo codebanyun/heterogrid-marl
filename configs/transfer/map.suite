@@ -1,0 +1,583 @@
+{
+  "schema_version": 1,
+  "capacity": {
+    "max_red": 6,
+    "max_blue": 6,
+    "message_dim": 8
+  },
+  "tasks": {
+    "train_map_20": {
+      "map_size": [
+        20,
+        20,
+        6
+      ],
+      "red": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "blue": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "role_stats": {
+        "scout": {
+          "hp": 60,
+          "vision": 7,
+          "attack_range": 0,
+          "damage": 0
+        },
+        "strike": {
+          "hp": 100,
+          "vision": 3,
+          "attack_range": 6,
+          "damage": 20
+        },
+        "hybrid": {
+          "hp": 80,
+          "vision": 5,
+          "attack_range": 4,
+          "damage": 12
+        }
+      },
+      "max_steps": 200,
+      "opponent": "rule",
+      "communication": "distance",
+      "comm_radius": 10,
+      "dropout_probability": 0.25,
+      "target_sharing": "auto",
+      "target_ttl": 2,
+      "message_dim": 8,
+      "reward_mode": "dense",
+      "damage_reward": 0.01,
+      "kill_reward": 1.0,
+      "win_reward": 10.0,
+      "loss_reward": -10.0,
+      "timeout_as_loss": true,
+      "time_penalty": 0.005,
+      "discovery_reward": 0.05,
+      "sharing_reward": 0.05,
+      "information_reward_cap": 1,
+      "scripted_target_sharing": false,
+      "red_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "blue_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "reward_normalization": "reference",
+      "reward_reference_team_size": 6,
+      "reward_reference_team_hp": 480,
+      "diagnostics_enabled": true
+    },
+    "train_map_24": {
+      "map_size": [
+        24,
+        24,
+        6
+      ],
+      "red": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "blue": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "role_stats": {
+        "scout": {
+          "hp": 60,
+          "vision": 7,
+          "attack_range": 0,
+          "damage": 0
+        },
+        "strike": {
+          "hp": 100,
+          "vision": 3,
+          "attack_range": 6,
+          "damage": 20
+        },
+        "hybrid": {
+          "hp": 80,
+          "vision": 5,
+          "attack_range": 4,
+          "damage": 12
+        }
+      },
+      "max_steps": 200,
+      "opponent": "rule",
+      "communication": "distance",
+      "comm_radius": 10,
+      "dropout_probability": 0.25,
+      "target_sharing": "auto",
+      "target_ttl": 2,
+      "message_dim": 8,
+      "reward_mode": "dense",
+      "damage_reward": 0.01,
+      "kill_reward": 1.0,
+      "win_reward": 10.0,
+      "loss_reward": -10.0,
+      "timeout_as_loss": true,
+      "time_penalty": 0.005,
+      "discovery_reward": 0.05,
+      "sharing_reward": 0.05,
+      "information_reward_cap": 1,
+      "scripted_target_sharing": false,
+      "red_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "blue_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "reward_normalization": "reference",
+      "reward_reference_team_size": 6,
+      "reward_reference_team_hp": 480,
+      "diagnostics_enabled": true
+    },
+    "validation_map_22": {
+      "map_size": [
+        22,
+        22,
+        6
+      ],
+      "red": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "blue": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "role_stats": {
+        "scout": {
+          "hp": 60,
+          "vision": 7,
+          "attack_range": 0,
+          "damage": 0
+        },
+        "strike": {
+          "hp": 100,
+          "vision": 3,
+          "attack_range": 6,
+          "damage": 20
+        },
+        "hybrid": {
+          "hp": 80,
+          "vision": 5,
+          "attack_range": 4,
+          "damage": 12
+        }
+      },
+      "max_steps": 200,
+      "opponent": "rule",
+      "communication": "distance",
+      "comm_radius": 10,
+      "dropout_probability": 0.25,
+      "target_sharing": "auto",
+      "target_ttl": 2,
+      "message_dim": 8,
+      "reward_mode": "dense",
+      "damage_reward": 0.01,
+      "kill_reward": 1.0,
+      "win_reward": 10.0,
+      "loss_reward": -10.0,
+      "timeout_as_loss": true,
+      "time_penalty": 0.005,
+      "discovery_reward": 0.05,
+      "sharing_reward": 0.05,
+      "information_reward_cap": 1,
+      "scripted_target_sharing": false,
+      "red_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "blue_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "reward_normalization": "reference",
+      "reward_reference_team_size": 6,
+      "reward_reference_team_hp": 480,
+      "diagnostics_enabled": true
+    },
+    "test_map_28": {
+      "map_size": [
+        28,
+        28,
+        6
+      ],
+      "red": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "blue": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "role_stats": {
+        "scout": {
+          "hp": 60,
+          "vision": 7,
+          "attack_range": 0,
+          "damage": 0
+        },
+        "strike": {
+          "hp": 100,
+          "vision": 3,
+          "attack_range": 6,
+          "damage": 20
+        },
+        "hybrid": {
+          "hp": 80,
+          "vision": 5,
+          "attack_range": 4,
+          "damage": 12
+        }
+      },
+      "max_steps": 200,
+      "opponent": "rule",
+      "communication": "distance",
+      "comm_radius": 10,
+      "dropout_probability": 0.25,
+      "target_sharing": "auto",
+      "target_ttl": 2,
+      "message_dim": 8,
+      "reward_mode": "dense",
+      "damage_reward": 0.01,
+      "kill_reward": 1.0,
+      "win_reward": 10.0,
+      "loss_reward": -10.0,
+      "timeout_as_loss": true,
+      "time_penalty": 0.005,
+      "discovery_reward": 0.05,
+      "sharing_reward": 0.05,
+      "information_reward_cap": 1,
+      "scripted_target_sharing": false,
+      "red_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "blue_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "reward_normalization": "reference",
+      "reward_reference_team_size": 6,
+      "reward_reference_team_hp": 480,
+      "diagnostics_enabled": true
+    },
+    "test_map_32": {
+      "map_size": [
+        32,
+        32,
+        6
+      ],
+      "red": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "blue": [
+        {
+          "role": "scout",
+          "platform": "uav"
+        },
+        {
+          "role": "scout",
+          "platform": "usv"
+        },
+        {
+          "role": "strike",
+          "platform": "robot"
+        },
+        {
+          "role": "strike",
+          "platform": "robot_dog"
+        },
+        {
+          "role": "hybrid",
+          "platform": "uav"
+        },
+        {
+          "role": "hybrid",
+          "platform": "robot_dog"
+        }
+      ],
+      "role_stats": {
+        "scout": {
+          "hp": 60,
+          "vision": 7,
+          "attack_range": 0,
+          "damage": 0
+        },
+        "strike": {
+          "hp": 100,
+          "vision": 3,
+          "attack_range": 6,
+          "damage": 20
+        },
+        "hybrid": {
+          "hp": 80,
+          "vision": 5,
+          "attack_range": 4,
+          "damage": 12
+        }
+      },
+      "max_steps": 200,
+      "opponent": "rule",
+      "communication": "distance",
+      "comm_radius": 10,
+      "dropout_probability": 0.25,
+      "target_sharing": "auto",
+      "target_ttl": 2,
+      "message_dim": 8,
+      "reward_mode": "dense",
+      "damage_reward": 0.01,
+      "kill_reward": 1.0,
+      "win_reward": 10.0,
+      "loss_reward": -10.0,
+      "timeout_as_loss": true,
+      "time_penalty": 0.005,
+      "discovery_reward": 0.05,
+      "sharing_reward": 0.05,
+      "information_reward_cap": 1,
+      "scripted_target_sharing": false,
+      "red_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "blue_communication": {
+        "mode": "distance",
+        "radius": 10,
+        "dropout_probability": 0
+      },
+      "reward_normalization": "reference",
+      "reward_reference_team_size": 6,
+      "reward_reference_team_hp": 480,
+      "diagnostics_enabled": true
+    }
+  },
+  "splits": {
+    "train": [
+      "train_map_20",
+      "train_map_24"
+    ],
+    "validation": [
+      "validation_map_22"
+    ],
+    "test": [
+      "test_map_28",
+      "test_map_32"
+    ]
+  }
+}

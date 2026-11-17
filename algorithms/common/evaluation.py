@@ -16,6 +16,11 @@ def write_json(path, value):
 
 
 def observe(env):
+    if callable(getattr(env, "get_active_mask", None)):
+        # Opt-in transfer adapters own their padded actor/state/action layout.
+        obs = np.asarray(env.get_obs(), dtype=np.float32)
+        state = np.repeat(env.get_state()[None], env.n_agents, axis=0)
+        return obs, state, np.asarray(env.get_avail_actions(), dtype=np.float32), env.get_active_mask()
     # The PettingZoo step already computed live observations and action masks.
     observations = [env.env._last_observations[n] if n in env.env._last_observations
                     else env.env.core.observation(n) for n in env.env.possible_agents]

@@ -48,6 +48,15 @@ SMPE_ROOT=/path/to/smpe_raw python -m unittest tests.integrations.smpe.test_back
 
 ## 可选浏览器检查
 
+迁移接口的专项回归：
+
+```bash
+python -m unittest tests.environment.test_transfer tests.integrations.test_transfer_buffer -v
+python -m unittest tests.integrations.mappo.test_epymarl_resume -v
+```
+
+第二条需要 PyTorch 和外部 EPyMARL；`EPYMARL_ROOT` 指向包含 `learners/ppo_learner.py` 的 `src` 目录。覆盖原生 learner/优化器/随机状态恢复，以及 COMA 所需动作 one-hot 的采集契约。研究算法源码不属于这些环境接口测试。
+
 准备 Node.js、Playwright 和 Chromium，先生成回放并启动测试服务：
 
 ```bash

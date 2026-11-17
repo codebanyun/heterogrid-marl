@@ -59,6 +59,31 @@ class ExperimentRecorderTest(unittest.TestCase):
             recorder.close()
             self.assertEqual(json.loads((output / "run.json").read_text())["status"], "FAILED")
 
+    def test_resume_keeps_prior_history_and_rolls_back_to_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            first = ExperimentRecorder(output, None, {"name": "mappo"}, [Path(__file__)], capture=False)
+            first.logfile.write("before interruption\n")
+            first.log(10, {"loss": 1.0})
+            first.log(20, {"loss": 2.0})
+            first.close()
+            original_start = first.run["start_time"]
+            resumed = ExperimentRecorder(output, None, {"name": "mappo"}, [Path(__file__)],
+                                         capture=False, resume_step=10)
+            try:
+                self.assertEqual(resumed.run["start_time"], original_start)
+                self.assertEqual(resumed.run["status"], "RUNNING")
+                self.assertEqual(resumed.metrics["loss"]["steps"], [10])
+                self.assertEqual(resumed.info["loss_T"], [10])
+                self.assertEqual(len(resumed.run["experiment"]["sources"]), 1)
+                resumed.logfile.write("after interruption\n")
+                resumed.log(15, {"loss": 0.5})
+                resumed.complete({"done": True})
+                self.assertEqual((output / "cout.txt").read_text(), "before interruption\nafter interruption\n")
+                self.assertEqual(resumed.metrics["loss"]["steps"], [10, 15])
+            finally:
+                resumed.close()
+
     def test_study_summary_cannot_overwrite_run(self):
         from algorithms.mappo.study import summarize
 

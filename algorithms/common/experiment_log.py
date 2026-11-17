@@ -8,6 +8,7 @@ import math
 import platform
 import socket
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +21,15 @@ def write_atomic(path, data):
     path = Path(path)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    # Windows readers can briefly deny replacement while inspecting status.
+    for attempt in range(8):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(.02 * (attempt + 1))
 
 
 class Tee:
@@ -37,10 +46,10 @@ class Tee:
 
 
 class ExperimentRecorder:
-    def __init__(self, output, group, config, sources=(), capture=True):
+    def __init__(self, output, group, config, sources=(), capture=True, *, resume_step=None):
         self.output = Path(output).resolve()
         self.registered_path = self.output
-        if group is not None:
+        if group is not None and resume_step is None:
             group = Path(group).resolve()
             group.mkdir(parents=True, exist_ok=True)
             index = 1
@@ -61,26 +70,42 @@ class ExperimentRecorder:
                              "os": platform.platform()},
                     "experiment": {"name": config["name"], "framework": config.get("framework", "onpolicy/MAPPO"), "sources": []},
                     "artifacts": [], "result": None}
+        if resume_step is not None:
+            previous = json.loads((self.output / "config.json").read_text(encoding="utf-8"))
+            self.run = json.loads((self.output / "run.json").read_text(encoding="utf-8"))
+            if self.run["command"] != config["name"]:
+                raise ValueError("Cannot resume a different experiment")
+            self.registered_path = Path(previous["registered_path"])
+            metrics = json.loads((self.output / "metrics.json").read_text(encoding="utf-8"))
+            for name, metric in metrics.items():
+                retained = [i for i, step in enumerate(metric["steps"]) if step <= resume_step]
+                self.metrics[name] = {key: [values[i] for i in retained] for key, values in metric.items()}
+                self.info[name] = self.metrics[name]["values"]
+                self.info[name + "_T"] = self.metrics[name]["steps"]
+            self.run.update(status="RUNNING", stop_time=None, heartbeat=timestamp(), result=None)
+            self.run.setdefault("resumptions", []).append({"time": timestamp(), "checkpoint_step": resume_step})
         source_dir = self.output / "_sources"
-        source_dir.mkdir()
+        source_dir.mkdir(exist_ok=resume_step is not None)
         for source in sources:
             source = Path(source).resolve()
             content = source.read_bytes()
             digest = hashlib.sha256(content).hexdigest()
             target = source_dir / (digest[:16] + "_" + source.name)
             target.write_bytes(content)
-            self.run["experiment"]["sources"].append({"path": str(source), "snapshot": str(target.relative_to(self.output)),
-                                                        "sha256": digest})
+            entry = {"path": str(source), "snapshot": str(target.relative_to(self.output)), "sha256": digest}
+            if entry not in self.run["experiment"]["sources"]:
+                self.run["experiment"]["sources"].append(entry)
         config = {**config, "registered_path": str(self.registered_path)}
-        write_atomic(self.output / "config.json", config)
+        if resume_step is None:
+            write_atomic(self.output / "config.json", config)
         self.flush()
-        self.logfile = (self.output / "cout.txt").open("w", encoding="utf-8", buffering=1)
+        self.logfile = (self.output / "cout.txt").open("w" if resume_step is None else "a", encoding="utf-8", buffering=1)
         self.streams = (sys.stdout, sys.stderr) if capture else None
         if capture:
             sys.stdout, sys.stderr = Tee(sys.stdout, self.logfile), Tee(sys.stderr, self.logfile)
         atexit.register(self.close)
 
-    def log(self, step, values):
+    def log(self, step, values, *, flush=True):
         now = timestamp()
         for name, value in values.items():
             if value is None:
@@ -95,7 +120,8 @@ class ExperimentRecorder:
             self.info[name] = metric["values"]
             self.info[name + "_T"] = metric["steps"]
         self.run["heartbeat"] = now
-        self.flush()
+        if flush:
+            self.flush()
 
     def evaluation(self, step, result, deterministic):
         prefix = "test_" if deterministic else "sampled_test_"

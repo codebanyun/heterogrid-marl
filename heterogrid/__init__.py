@@ -2,6 +2,7 @@
 from .config import CommunicationConfig, EnvConfig, RoleStats, UnitSpec
 from .env import HeteroGridParallelEnv, env, parallel_env
 from .smac import SMACAdapter
+from .transfer import TaskSuite, TransferCapacity, TransferSMACAdapter
 
 __version__ = "0.1.0"
-__all__ = ["CommunicationConfig", "EnvConfig", "RoleStats", "UnitSpec", "HeteroGridParallelEnv", "parallel_env", "env", "SMACAdapter"]
+__all__ = ["CommunicationConfig", "EnvConfig", "RoleStats", "UnitSpec", "HeteroGridParallelEnv", "parallel_env", "env", "SMACAdapter", "TaskSuite", "TransferCapacity", "TransferSMACAdapter"]

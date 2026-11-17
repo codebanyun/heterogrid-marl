@@ -24,6 +24,7 @@
 - 使用动态存活节点和字典观测：接入 `heterogrid.parallel_env`。
 - 使用逐节点 API：接入 `heterogrid.env`，一轮动作齐备后推进环境。
 - 使用固定节点槽位、全局状态和合法动作掩码：接入 `heterogrid.SMACAdapter`。
+- 跨地图、人数和角色组成在线训练：独立启用`heterogrid.TransferSMACAdapter`，见[迁移协议及MAPPO基线](../docs/transfer.md)。
 
 环境规则留在 `heterogrid/`，算法特有的观测转换、RNN 状态和训练流程留在算法子目录。禁止把全局状态、隐藏坐标或诊断快照泄漏给执行 actor。
 
