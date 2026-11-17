@@ -207,7 +207,90 @@ JSON 顶层对应字段为：
 
 所有这些仍是共享团队奖励，不是侦察节点独享的个人奖励；自动共享不需要 actor 输出通信动作。情报奖励是任务塑形，未声称满足势函数策略不变性。初始状态不发免费情报奖励，所有奖励分量只在 `step()` 中结算。系数需要结合多种子对照实验调整，不能仅观察 shaped return 是否增加。
 
-消灭对方全部节点且己方仍存活才算胜利，包括必须击败敌方侦察节点。如果只剩不能攻击的节点，会一直到超时。超时默认平局；可用 `timeout_as_loss=true` 为红方添加失败奖励。即使采用这一评分方式，PettingZoo 时间限制仍返回 truncation，SMAC info 仍标记 episode_limit。
+默认 `terminate_on_no_firepower=false`：消灭对方全部节点且己方仍存活才算胜利，包括必须击败敌方侦察节点。如果只剩不能攻击的节点，会一直到超时。超时默认平局；可用 `timeout_as_loss=true` 为红方添加失败奖励。即使采用这一评分方式，PettingZoo 时间限制仍返回 truncation，SMAC info 仍标记 episode_limit。
+
+### 可选：全部火力耗尽时提前裁决（新任务协议）
+
+在环境 JSON 中加入 `"terminate_on_no_firepower": true`，可去掉失去全部火力后的无效拖延。
+这是显式的**胜负目标与奖励时机变更**，不只是等价加速；旧配置默认关闭，冻结的旧实验不受影响。
+不能把新旧协议的胜率直接拼在同一条学习曲线中，也不能把提升全部归因于通信或算法。
+
+每步先同时结算双方射击伤害、再执行幸存者移动，随后按下面优先级裁决：
+
+| 条件（按顺序） | `reason` | 结果与终局奖励 |
+|---|---|---|
+| 双方全部单位阵亡 | `mutual_elimination` | 平局，双方各得 `draw_reward` |
+| 一方全部单位阵亡 | `elimination` | 原有消灭胜负，胜方 `win_reward`、负方 `loss_reward` |
+| 双方仍有单位，但都没有活着且 `damage>0` 的单位 | `mutual_no_firepower` | 平局，双方各得 `draw_reward` |
+| 仅一方没有活着且 `damage>0` 的单位 | `no_firepower` | 该方立即判负，胜方 `win_reward`、负方 `loss_reward` |
+| 以上均不满足，达到 `max_steps` | `timeout` | 沿用 `timeout_as_loss`，不改原有超时语义 |
+
+`draw_reward` 默认0，支持任意有限数值；适用于上述两种真正的同时失能/阵亡平局，不用于超时。
+它只替换 terminal 分量；本步实际伤害、击杀、信息奖励、时间成本照常结算一次。
+侦察兵仍存活时不伪造阵亡、击杀或伤害；平局不记胜，不再额外给红方超时失败奖励。
+例如默认 sparse 奖励、`time_penalty=.005`：失能负方本步为 `-10.005`，双方失能平局各为 `-.005`。
+若本来就只有非武装单位，reset 仍正常返回，首个 step 才裁决并发放奖励。
+
+火力按实际角色能力 `damage>0` 判断，不写死角色名。暂时没看见敌人、没有合法攻击、射程不足或通信失联，
+都不等于失去火力；`attack_range=0` 的正伤害单位仍可攻击同格目标，不被误判。
+提前裁决返回真正的 termination（SMAC `episode_limit=false`），critic 不应把它当时间截断来 bootstrap。
+不增加 actor 的观测、消息或动作维度，不改变蓝方规则策略、角色能力或射击合法性。
+
+同为5M环境步，新协议可能经历更多对局，也会改变折扣后的失败代价；请同时保留训练局数、局长、
+`no_firepower` / `mutual_no_firepower` 原因比例、胜率和耗时。
+共用评估汇总提供 `no_firepower_rate`、`mutual_no_firepower_rate`、`mutual_draw_rate`，
+其中最后一项仅统计同时阵亡/失能，不包含超时。
+
+### C1S：双方均无通信参考场景
+
+原固定蓝方 C1 保留：红方 `none`，蓝方 `distance/radius=10/dropout=0`。
+新增独立标签 **C1S**：双方均 `none`，没有目标报告或消息穿越链路；自身感知、近距离射击、
+集中训练所用全局状态/teacher 不关闭，也不是禁止算法内部做隐式信念推断。
+它不加入原13场景矩阵，不覆盖任何旧 C1 文件。
+
+可直接使用下列配置（其余奖励、角色、6v6、地图24×24×6和200步均沿用原基准）：
+
+- `configs/references/6v6_rule_both_none.json`：C1S，旧终止协议；用于只改变蓝方通信的参考训练。
+- `configs/references/6v6_rule_red_none_early.json`：原通信不变，开启新终止协议。
+- `configs/references/6v6_rule_both_none_early.json`：C1S开启新终止协议。
+
+Python 使用 `algorithms.common.sensitivity.c1_reference_scenarios(early_termination=False)`
+得到独立的 C1/C1S 配置；`True` 同时切换二者的终止协议。
+只研究通信影响时，必须让比较两侧使用同一个终止协议。
+
+准备双方无通信的参考队列（六算法×三个seed记录，**自动复用四基线既有完整训练**；
+只有DIB-v2/v3共6次新训练，每次5M步，不启用新终止协议）：
+
+```bash
+python -m algorithms.common.c1_reference_campaign --workers 12
+cd output/campaigns/20261109_c1_symmetric_none_5m_c1_reference/_runtime
+nohup /root/miniconda3/envs/smpe-py39/bin/python -u -m algorithms.common.c1_reference_campaign \
+  --run /root/heterogrid-marl/output/campaigns/20261109_c1_symmetric_none_5m_c1_reference \
+  > ../nohup.log 2>&1 < /dev/null &
+```
+
+四基线直接引用原 `output/{qmix,qtran}/20261011_sensitivity_5m/C1/seed_*` 和
+`output/{maa2c,coma}/20261012_sensitivity_5m/C1/seed_*` 的双方无通信训练与测试，
+新队列中标记 `REUSED`、新增训练步为0，不改写旧数据，也不把复用算作新的独立重复。
+DIB新训练位于 `output/dib_mappo/20261109_c1_symmetric_none_5m/{dib_v2,dib_v3}/C1S/seed_*`。
+总状态、逐seed验证CSV和最终均值±SEM汇总在同名 `output/campaigns/*_c1_reference/`。
+使用冻结源码和原外部算法副本；DIB两个版本固定已选的 `belief_first=.30`，不重新选参。
+DIB新训练验证910042起、独立测试1800042起；复用基线保留原测试200042起，
+CSV中记录每条数据的来源、测试种子和是否复用，不将不同地图称为逐局配对测试。
+不能仅为统一评估地图而重复训练5M；如以后需要同测试集比较，应只读加载旧模型补评估。
+新增训练最初从头开始；管理器停止后DIB可通过 `--resume-run` 精确续训，不重置5M预算。
+续训时必须保留原 `_runtime` 中全部计算文件字节不变（DIB身份指纹也覆盖管理器文件）；
+仅更新调度时，另冻存调度脚本，使用该脚本管理原runtime中的worker，不能覆盖原文件冒充原快照。
+
+若今后单独研究提前终止，另用新名称准备成对场景，例如：
+
+```bash
+python -m algorithms.common.c1_reference_campaign \
+  --name c1_firepower_v1_5m --early-termination --scenarios C1 C1S --workers 12
+```
+
+该命令只是另备队列，需对新的 coordinator 再显式 nohup 启动，不会切换任何既有任务。
+当前C1S参考实验与旧C1均不启用提前终止；两个改动的效果因此不会混在一起。
 
 死亡为 termination，时间限制为 truncation，终局全灭为 termination。随机性由 `reset(seed)` 控制，不使用全局 NumPy 随机数；同一 seed、同一动作和同一消息顺序可以复现轨迹。跨实验固定配置、种子与对手版本。
 
@@ -322,6 +405,46 @@ MAPPO逐局训练日志同样透传双方数据。不同指标有效局数可能
 QMIX/QTRAN通过固定槽位SMAC接口接入：每步只取一次团队奖励，执行网络读取局部观测和合法动作掩码，训练联合价值函数读取全局状态。灵敏度矩阵保留200步时限、规则蓝方、原有角色能力、奖励和自动目标共享，只改变地图、人数或通信设置。配置、后台运行与评估方法详见对应算法说明。
 
 MAA2C/COMA也通过相同SMAC接口接入，复用EPyMARL原始learner。共享GRU actor只用局部观测与agent ID；MAA2C为集中式V critic，COMA为屏蔽自身当前动作的反事实Q critic。固定4环境，采集4个完整新回合后更新一次，不使用经验回放；hidden64、学习率、n-step、熵系数与目标更新频率跨场景保持固定。200步超时作为任务终局不bootstrap，不额外标准化奖励。每次精确5M团队步，验证64局、独立测试128局，贪心为主，categorical采样为辅。完整固定参数和后台命令见算法说明，输出分别为 `output/maa2c/`、`output/coma/`。
+
+[DIB-MAPPO v2](../algorithms/dib_mappo/README.md) 同样使用这些 `EnvConfig` 字段，
+通过 `--dib-root /root/research/DIB-MAPPO/src` 接入原生 AHS/BBD/MHF 模块。
+固定蓝方只改红方的13场景及D组见该目录说明；D组使用 `reward_normalization="reference"`
+和近似等密度地图，全部场景启用 `diagnostics_enabled=true`。执行 actor 只读取自身局部历史，
+不把训练 teacher 或集中式信息泄漏给红方，不改变环境通信规则。
+保留原生128维网络；4环境、PPO4轮、5M步预算跨场景固定。
+原20261018队列为2M预热的legacy；2026-10-21起新命令默认
+`--training-profile active_mask_1m`（1M辅助/残差预热、2M渐入、动作前存活mask）。
+该mask只作用actor/辅助学习与优势统计，团队critic不因单个agent阵亡而截断回报；
+复现旧协议请显式用`--training-profile legacy`。MHF依原稿当前proposal×最新转移似然，
+不擅自加入历史权重递推。四profile独立筛查及测试口径见[适配审计](../algorithms/dib_mappo/ADAPTATION.md)。
+与此前64维基线不是等参数量比较。输出为 `output/dib_mappo/`，完整配置、
+显式上游运行器差异、D0/B0等价来源和后台命令见算法说明。
+
+另有显式 `--training-profile robust_comm_v1` 的本环境定向整合变体：仅改变算法辅助目标、
+滤波评分、局部信任残差和训练协议，不改变环境/动作/奖励，不添加隐藏状态或虚拟目标报告。
+前1M辅助关闭，随后0.5M信念预训练，再渐入残差。默认定向训练C1/C5/C6×三个seed，
+通过 `python -m algorithms.dib_mappo.robust_campaign` 准备，独立nohup启动。
+它不是上游DIB等价优化，不能与原48次结果混用；详见[配置说明](../algorithms/dib_mappo/ROBUST_COMM.md)。
+
+定向优化另有 `tactical_v2`，使用独立 `python -m algorithms.dib_mappo.tactical_campaign` 准备及nohup运行。
+不改变环境、执行信息、动作或奖励；它改变了AHS/BBD训练定义、实体动作头与PPO/GAE，不能当作原生DIB。
+默认36次5M（180M搜索总步数），验证统一选配置后再测选定模型，并用同一测试种子重评既有基准。
+检查点含优化器/RNG/完整批次计数，支持从冻结_runtime用 `--resume-run` 同预算精确恢复。
+训练中原始日志按封存gzip段保存，结束合并；不会续接旧权重或将旧中断任务标成完成。
+详细参数、信息边界、早期辅助调度、选择规则和恢复命令见[TACTICAL_V2配置](../algorithms/dib_mappo/TACTICAL_V2.md)。
+
+后续C1/C6整合研究可显式使用 `--training-profile resilient_v3`，仍走 `tactical_campaign`。
+只改变算法：局部几何候选编码、战斗能力耗尽后的actor训练掩码、episode均衡PPO、
+gamma=.997/GAE lambda=.99、8个完整回合一批；不提前终止环境或改变奖励/攻击合法性。
+保留蓝方rule+distance10，红方none或50%失联。新任务从头训练，不继承旧seed模型。
+开发验证910042起，新的独立测试1800042起；原800042测试集已公开，不继续作为未见测试。
+完整CLI、30M预算、精确续训和数据边界见[RESILIENT_V3配置](../algorithms/dib_mappo/RESILIENT_V3.md)。
+
+复用已选定Tactical-v2做全组扩展时，使用 `python -m algorithms.dib_mappo.full_campaign --matched-baselines`，
+不要运行默认三preset搜索，也不要混入v3。新训练B0/M1-M3/N1-N3/C2/C4/D1-D3各3seed；
+C3/C5链接原数据，D0经有效奖励等价校验后链接B0，C1/C6排除。
+算法计算文件从原冻结版本逐字节复制，仅运行与无损存储管理更新；
+compact模式的恢复限制、完整5M/64局验证/128局测试协议见[全组v2配置](../algorithms/dib_mappo/FULL_GROUPS_V2.md)。
 
 **推荐独立评估进程**，定期加载训练检查点，运行环境并发布快照。发布器必须显式启用，默认训练路径完全没有可视化开销：
 

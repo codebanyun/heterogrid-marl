@@ -13,6 +13,7 @@
 - `qtran/`：[QTRAN-base 接入说明](qtran/README.md)。
 - `maa2c/`：[EPyMARL MAA2C 接入与同预算实验](maa2c/README.md)。
 - `coma/`：[EPyMARL COMA 接入说明](coma/README.md)。
+- `dib_mappo/`：[原生 DIB-MAPPO v2 接入、固定蓝方13场景及D组实验](dib_mappo/README.md)。
 - `common/actor_critic/`：MAA2C/COMA共用的on-policy采集、外部learner接入与队列；复用公共报告格式。
 - `common/value_decomposition/`：QMIX/QTRAN共用的训练、回放、后台队列与报告工具。
 
@@ -66,3 +67,26 @@ nohup setsid -f python -u -m algorithms.common.fixed_blue_campaign \
 另外两个算法家族目录只保存冻结源码与原始计划（`DELEGATED`），不启动额外管理器。
 验证/独立测试与模型保存预算沿用各算法原设置，不按胜率提前停止，不覆盖历史数据。
 也可以在原来的双算法准备命令中加 `--fixed-blue`，只运行对应家族。
+
+## 向已完成实验追加D组
+
+`algorithms.common.density_campaign` 向四算法已有实验目录追加D0–D3，不覆盖原13场景。
+D0为6v6基准：核对环境/算法参数、确认奖励缩放因子均为1后复用B0模型与验证曲线，
+补做128局×final/best×贪心/采样诊断评估，并逐局核对结果与B0一致，不重新训练。
+D1/D2/D3分别为3v3/19×19×5、9v9/27×27×7、12v12/30×30×8，
+四算法各3种子、5M步，共36次新训练。所有D场景开启参考奖励归一化和双方诊断。
+
+```bash
+python -m algorithms.common.density_campaign \
+  --name 20261013_fixed_blue_sensitivity_5m --workers 48
+nohup setsid -f python -u -m algorithms.common.density_campaign \
+  --run output/campaigns/20261013_fixed_blue_sensitivity_5m_density_D \
+  > output/campaigns/20261013_fixed_blue_sensitivity_5m_density_D/nohup.log 2>&1 < /dev/null
+```
+
+四算法原目录下新增 `D0/`–`D3/`、`configs/D*.json`、`D_experiment.json`、`D_status.json`、
+`D_README.md`、`D_report/`。D0模型为指向B0原文件的符号链接，来源、SHA256和评估一致性记录在
+`D0/seed_*/provenance.json`，不是新的训练重复。D_report单独保存胜率/诊断汇总和密度组曲线，
+不会替换原RESULTS.md、aggregate.json、status.json或三组图。
+使用原实验冻结的算法后端副本，训练CLI继承B0的固定参数，只改场景和输出路径。
+未运行额外的固定地图归一化对照；D组与旧N组的差异不能全部归因于密度。

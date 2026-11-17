@@ -45,6 +45,9 @@ def aggregate(rows):
     contacts = [r["first_contact_step"] for r in rows if r["first_contact_step"] is not None]
     return {"episodes": len(rows), "win_rate": sum(r["winner"] == "red" for r in rows) / len(rows),
             "timeout_rate": sum(r["reason"] == "timeout" for r in rows) / len(rows),
+            "no_firepower_rate": sum(r["reason"] == "no_firepower" for r in rows) / len(rows),
+            "mutual_no_firepower_rate": sum(r["reason"] == "mutual_no_firepower" for r in rows) / len(rows),
+            "mutual_draw_rate": sum(r["reason"] in ("mutual_elimination", "mutual_no_firepower") for r in rows) / len(rows),
             "contact_rate": len(contacts) / len(rows),
             "mean_first_contact_step": float(np.mean(contacts)) if contacts else None,
             **{"mean_" + key: float(np.mean([r[key] for r in rows])) for key in

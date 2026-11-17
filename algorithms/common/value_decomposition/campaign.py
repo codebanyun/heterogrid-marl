@@ -131,7 +131,7 @@ def supervise(coordinator):
         write_atomic(coordinator / "status.json", plan)
         for alg, root in plan["roots"].items():
             jobs = [j for j in plan["jobs"] if j["algorithm"] == alg]
-            write_atomic(Path(root) / "status.json", {"manager_pid": os.getpid(), "status": plan["status"],
+            write_atomic(Path(root) / plan.get("algorithm_status_filename", "status.json"), {"manager_pid": os.getpid(), "status": plan["status"],
                 "coordinator": str(coordinator), "heartbeat": plan["heartbeat"], "jobs": jobs,
                 "counts": {s: sum(j["status"] == s for j in jobs) for s in
                            ("PENDING", "RUNNING", "COMPLETED", "FAILED", "INTERRUPTED")}})
@@ -173,7 +173,8 @@ def supervise(coordinator):
             if time.monotonic() - last_report > 300 or not live:
                 for root in plan["roots"].values():
                     try:
-                        summarize(root)
+                        for options in plan.get("report_options_list", [plan.get("report_options", {})]):
+                            summarize(root, **options)
                     except Exception as error:
                         print("Report error: " + repr(error), flush=True)
                 last_report = time.monotonic()

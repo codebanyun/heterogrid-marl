@@ -103,6 +103,10 @@ class EnvConfig:
     reward_reference_team_size: int = 6
     reward_reference_team_hp: float = 480.0
     diagnostics_enabled: bool = False
+    # Opt-in task version: surviving units with damage > 0 define firepower.
+    # False preserves the historical eliminate-all-units objective.
+    terminate_on_no_firepower: bool = False
+    draw_reward: float = 0.0
 
     def __post_init__(self):
         if len(self.map_size) != 3 or any(type(n) is not int or not 1 <= n < 2**31 for n in self.map_size):
@@ -131,6 +135,11 @@ class EnvConfig:
             raise ValueError("reward_reference_team_hp must be finite and positive")
         if type(self.diagnostics_enabled) is not bool:
             raise ValueError("diagnostics_enabled must be a boolean")
+        if type(self.terminate_on_no_firepower) is not bool:
+            raise ValueError("terminate_on_no_firepower must be a boolean")
+        if (isinstance(self.draw_reward, bool) or not isinstance(self.draw_reward, (int, float)) or
+                not math.isfinite(self.draw_reward)):
+            raise ValueError("draw_reward must be finite")
         if not math.isfinite(self.comm_radius) or self.comm_radius < 0:
             raise ValueError("comm_radius must be finite and nonnegative")
         if not math.isfinite(self.dropout_probability) or not 0 <= self.dropout_probability <= 1:

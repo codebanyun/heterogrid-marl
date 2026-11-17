@@ -46,3 +46,14 @@ def communication_protocol(fixed_blue=False):
                           if fixed_blue else None,
             "outage_topology": "full", "outage_unit": "node_per_tick",
             "independent_team_rng": bool(fixed_blue)}
+
+
+def c1_reference_scenarios(*, early_termination=False):
+    """Separate reference matrix; never add tasks to the historical 13 scenes.
+
+    C1S differs from fixed-blue C1 only in blue_communication. Keep both team
+    overrides explicit, preserving the independent RNG / initial-position path.
+    Opting into early adjudication changes the objective for *both* scenes.
+    """
+    c1 = replace(scenarios(True)["C1"], terminate_on_no_firepower=early_termination)
+    return {"C1": c1, "C1S": replace(c1, blue_communication=CommunicationConfig(mode="none"))}

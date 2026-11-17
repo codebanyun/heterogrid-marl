@@ -32,21 +32,27 @@ def write_csv(path, rows, fields):
         writer.writerows(rows)
 
 
-def summarize(output):
+def summarize(output, experiment_file="experiment.json", report_directory=None):
     output = Path(output)
-    experiment = read_json(output / "experiment.json")
+    experiment = read_json(output / experiment_file)
     if experiment is None:
         raise ValueError("Missing experiment.json")
     seeds = experiment["seeds"]
-    figures = output / "figures"
+    labels = experiment.get("labels", LABELS)
+    report = output / report_directory if report_directory else output
+    report.mkdir(parents=True, exist_ok=True)
+    figures = report / "figures"
     figures.mkdir(exist_ok=True)
     source_rows, curves, run_rows, complete = [], {}, [], []
-    for task in LABELS:
+    diagnostic_rows = []
+    for task in labels:
         by_seed = []
         for seed in seeds:
             run = output / task / f"seed_{seed}"
             points = {}
-            for path in sorted((run / "evaluations").glob("validation_*/summary.json")):
+            validation_task = experiment.get("validation_sources", {}).get(task, task)
+            validation_run = output / validation_task / f"seed_{seed}"
+            for path in sorted((validation_run / "evaluations").glob("validation_*/summary.json")):
                 result = read_json(path)
                 if result:
                     step = int(path.parent.name.split("_")[-1])
@@ -64,6 +70,19 @@ def summarize(output):
                 "elapsed_seconds": progress.get("elapsed_seconds", 0)})
             if summary:
                 primary = summary["heldout"]["final"]["greedy"]
+                if "mean_team_episode_metrics" in primary:
+                    def flatten(value, prefix=""):
+                        result = {}
+                        for key, item in value.items():
+                            name = prefix + key
+                            if isinstance(item, dict):
+                                result.update(flatten(item, name + "."))
+                            else:
+                                result[name] = item
+                        return result
+                    diagnostic_rows.append({"scenario": task, "seed": seed,
+                        **flatten(primary["mean_team_episode_metrics"]),
+                        **flatten(primary["team_episode_metrics_observed_episodes"], "observed_episodes.")})
                 complete.append({"scenario": task, "seed": seed,
                     **{key: primary[key] for key in ("win_rate", "timeout_rate", "contact_rate", "mean_first_contact_step",
                        "mean_kill_fraction", "mean_useful_reports", "mean_damage", "mean_return")},
@@ -83,14 +102,30 @@ def summarize(output):
                          "n": len(values), **{"seed_" + str(s): float(v) for s, v in zip(seeds, values)}})
         curves[task] = rows
     write_csv(figures / "validation_source.csv", source_rows, ("scenario", "seed", "step", "win_rate", "episodes"))
-    write_csv(output / "run_status.csv", run_rows, tuple(run_rows[0]))
+    write_csv(report / "run_status.csv", run_rows, tuple(run_rows[0]))
     curve_rows = [row for task in curves.values() for row in task]
     write_csv(figures / "validation_mean_sem.csv", curve_rows,
               ("scenario", "step", "mean", "sem", "n", *("seed_" + str(s) for s in seeds)))
     if complete:
-        write_csv(output / "independent_test_per_seed.csv", complete, tuple(complete[0]))
+        write_csv(report / "independent_test_per_seed.csv", complete, tuple(complete[0]))
+    if diagnostic_rows:
+        fields = sorted({key for row in diagnostic_rows for key in row} - {"scenario", "seed"})
+        write_csv(report / "diagnostics_per_seed.csv", diagnostic_rows, ("scenario", "seed", *fields))
+        diagnostic_aggregate = []
+        for task in labels:
+            rows = [row for row in diagnostic_rows if row["scenario"] == task]
+            if len(rows) != len(seeds):
+                continue
+            metrics = {}
+            for field in fields:
+                values = [row[field] for row in rows if row.get(field) is not None]
+                metrics[field] = {"mean": float(np.mean(values)) if values else None,
+                    "sem": float(np.std(values, ddof=1) / np.sqrt(len(values))) if len(values) > 1 else None,
+                    "observed_seeds": len(values)}
+            diagnostic_aggregate.append({"scenario": task, "metrics": metrics})
+        write_atomic(report / "diagnostics_aggregate.json", {"seeds": seeds, "scenarios": diagnostic_aggregate})
     aggregates = []
-    for task in LABELS:
+    for task in labels:
         rows = [r for r in complete if r["scenario"] == task]
         if len(rows) != len(seeds):
             continue
@@ -106,11 +141,12 @@ def summarize(output):
         # Do not replace never-reached values with the budget or average them away.
         item["first_80_percent_step_by_seed"] = {str(r["seed"]): r["first_80_percent_step"] for r in rows}
         aggregates.append(item)
-    write_atomic(output / "aggregate.json", {"completed_runs": len(complete), "planned_runs": len(run_rows),
+    write_atomic(report / "aggregate.json", {"completed_runs": len(complete), "planned_runs": len(run_rows),
                  "seeds": seeds, "complete_scenarios": aggregates})
     lines = ["# " + experiment["algorithm"].upper() + " 灵敏度实验进度与结果", "",
-             f"已完成 {len(complete)}/{len(run_rows)} 次独立训练。主报告使用固定预算结束模型。", "",
-             "配置和任务矩阵见 experiment.json、configs/；各任务按 seed 保存原始记录。",
+             f"已完成 {len(complete)}/{len(run_rows)} 个模型结果。主报告使用固定预算结束模型。", "",
+             f"配置和任务矩阵见 {experiment_file}、configs/；各任务按 seed 保存原始记录。",
+             *experiment.get("report_notes", []),
              "曲线仅包含所有训练种子都完成的真实验证点，不平滑、不插值、不外推。",
              f"每次验证 {experiment['eval_episodes']} 局；实线为 {len(seeds)} 个训练种子的均值，阴影为样本标准差/√n。",
              f"最终独立测试每种模型/策略 {experiment['heldout_episodes']} 局；测试种子不参与选模型。",
@@ -129,7 +165,7 @@ def summarize(output):
     lines += ["", "完整指标：independent_test_per_seed.csv、aggregate.json。运行状态：run_status.csv。",
               "训练吞吐量分母为采集+学习时间；端到端吞吐量还包括验证、测试和保存。",
               "不同人数的绝对回报/伤害不直接排名；首次80%只在离散验证点判断，不代表持续达到。", ""]
-    (output / "RESULTS.md").write_text("\n".join(lines), encoding="utf-8")
+    (report / "RESULTS.md").write_text("\n".join(lines), encoding="utf-8")
     plot_curves(figures, curves, experiment)
     return {"completed": len(complete), "planned": len(run_rows)}
 
@@ -144,7 +180,8 @@ def plot_curves(figures, curves, experiment):
         "legend.frameon": False})
     colors = ["#444444", "#4477AA", "#66AACC", "#AA3377", "#CCBB44", "#228833", "#EE8866"]
     titles = {"map_size": "Map size", "agent_count": "Team size", "communication": "Communication"}
-    for group, tasks in GROUPS.items():
+    labels = experiment.get("labels", LABELS)
+    for group, tasks in experiment.get("groups", GROUPS).items():
         fig, ax = plt.subplots(figsize=(7.2047244, 3.9370079))
         for i, task in enumerate(tasks):
             rows = curves[task]
@@ -153,7 +190,7 @@ def plot_curves(figures, curves, experiment):
             x = np.asarray([r["step"] for r in rows]) / 1e6
             mean = np.asarray([r["mean"] for r in rows])
             sem = np.asarray([r["sem"] or 0 for r in rows])
-            label = LABELS[task] if task != "B0" else {
+            label = labels[task] if task != "B0" else {
                 "map_size": "24x24x6", "agent_count": "6v6", "communication": "Radius 10"}[group]
             ax.plot(x, mean, color=colors[i], marker="o", markersize=2, linewidth=1.2,
                     linestyle=["-", "--", "-.", ":", "-", "--", "-."][i],
@@ -162,7 +199,7 @@ def plot_curves(figures, curves, experiment):
                 ax.fill_between(x, np.clip(mean - sem, 0, 1), np.clip(mean + sem, 0, 1), color=colors[i], alpha=0.12)
         ax.set(xlabel="Team environment steps (millions)", ylabel="Validation win rate (greedy)",
                xlim=(0, experiment["steps"] / 1e6), ylim=(0, 1.02),
-               title=experiment["algorithm"].upper() + " | " + titles[group])
+               title=experiment["algorithm"].upper() + " | " + experiment.get("group_titles", {}).get(group, titles.get(group, group)))
         ax.grid(alpha=0.15)
         if ax.lines:
             ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=7)
@@ -177,7 +214,7 @@ def plot_curves(figures, curves, experiment):
             temporary.replace(target)
         plt.close(fig)
     (figures / "QA.md").write_text(
-        "# Figure contract and QA\n\nQuantitative comparison of map, team size and communication effects; "
+        "# Figure contract and QA\n\nQuantitative comparison of measured validation curves in the declared experiment groups; "
         "no directional claim before results. Fixed 183 mm canvas, editable SVG/PDF text, PNG preview.\n"
         "All raw validation observations are in validation_source.csv. Curves use the intersection of measured "
         "checkpoints across all requested training seeds; missing/unstarted seeds are never treated as zero.\n"

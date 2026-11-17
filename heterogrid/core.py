@@ -388,16 +388,28 @@ class GridCombat:
                 self.units[name].position += MOVES[action]
         self.step_count += 1
         counts = {t: sum(self.units[n].alive for n in self.names[t]) for t in ("red", "blue")}
-        self.finished = not counts["red"] or not counts["blue"] or self.step_count >= self.config.max_steps
-        if self.finished:
-            if not counts["red"] and not counts["blue"]:
-                self.reason = "mutual_elimination"
-            elif not counts["blue"]:
-                self.winner, self.reason = "red", "elimination"
-            elif not counts["red"]:
-                self.winner, self.reason = "blue", "elimination"
-            else:
-                self.reason = "timeout"
+        # Resolve simultaneous damage before adjudication. Elimination takes
+        # precedence over firepower exhaustion, and both take precedence over
+        # the time limit. Never substitute visibility / legal-shot availability
+        # for combat capability: a hidden or distant armed unit is still armed.
+        if not counts["red"] and not counts["blue"]:
+            self.reason = "mutual_elimination"
+        elif not counts["blue"]:
+            self.winner, self.reason = "red", "elimination"
+        elif not counts["red"]:
+            self.winner, self.reason = "blue", "elimination"
+        elif self.config.terminate_on_no_firepower:
+            armed = {t: sum(self.units[n].alive and self.units[n].stats.damage > 0
+                            for n in self.names[t]) for t in self.names}
+            if not armed["red"] and not armed["blue"]:
+                self.reason = "mutual_no_firepower"
+            elif not armed["red"]:
+                self.winner, self.reason = "blue", "no_firepower"
+            elif not armed["blue"]:
+                self.winner, self.reason = "red", "no_firepower"
+        if self.reason is None and self.step_count >= self.config.max_steps:
+            self.reason = "timeout"
+        self.finished = self.reason is not None
         self._sample_network()
         self.last_deliveries = []
         self._refresh_perception()
@@ -424,6 +436,9 @@ class GridCombat:
         if self.winner is not None:
             components[self.winner]["terminal"] = self.config.win_reward
             components[self.enemy_team(self.winner)]["terminal"] = self.config.loss_reward
+        elif self.reason in ("mutual_elimination", "mutual_no_firepower"):
+            for team in self.names:
+                components[team]["terminal"] = self.config.draw_reward
         elif self.reason == "timeout" and self.config.timeout_as_loss:
             components["red"]["terminal"] = self.config.loss_reward
         rewards = {t: sum(components[t].values()) for t in self.names}
