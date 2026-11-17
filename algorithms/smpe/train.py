@@ -13,10 +13,13 @@ import numpy as np
 import torch
 
 from algorithms.common.evaluation import evaluate, write_json
+from algorithms.common.episode_log import open_episode_log
+from algorithms.common.training_seeds import EpisodeSeedSequence
 from algorithms.common.experiment_log import ExperimentRecorder
 from algorithms.smpe.backend import (EvaluationPolicy, LearnerLogger, assert_finite, build, checkpoint,
-                                     collect, modules, parameter_deltas, restore, running_stats, snapshot)
-from algorithms.smpe.settings import DEFAULT_CONFIG, PROJECT_ROOT, add_backend_argument, hyperparameters, validate_backend
+                                     collect, modules, network_configuration, parameter_deltas, restore, running_stats, snapshot)
+from algorithms.smpe.settings import (DEFAULT_CONFIG, PROJECT_ROOT, TARGET_SYNC_FIX, add_backend_argument,
+                                      hyperparameters, validate_backend)
 from heterogrid import EnvConfig, SMACAdapter
 
 
@@ -36,6 +39,10 @@ def main():
     parser.add_argument("--save-interval", type=int, default=2000384)
     parser.add_argument("--log-interval", type=int, default=10240)
     parser.add_argument("--replay-episodes", type=int, default=2)
+    parser.add_argument("--compact-episode-log", action="store_true", help="Write lossless gzip episode records")
+    parser.add_argument("--environment-seed-mode", choices=("legacy", "episode-index"), default="legacy")
+    parser.add_argument("--greedy-validation-only", action="store_true")
+    parser.add_argument("--skip-initial-heldout", action="store_true")
     parser.add_argument("--checkpoint", type=Path)
     cli = parser.parse_args()
     root = validate_backend(parser, cli.smpe_root)
@@ -56,7 +63,11 @@ def main():
         torch.cuda.manual_seed_all(cli.seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-    config = EnvConfig.load(cli.config)
+    if cli.environment_seed_mode == "episode-index":
+        from algorithms.common.comm_scale_roster import environment_config
+        config = environment_config(json.loads(cli.config.read_text()))
+    else:
+        config = EnvConfig.load(cli.config)
     settings = hyperparameters(root, cli.device)
     saved = None
     if cli.checkpoint:
@@ -81,11 +92,13 @@ def main():
                 "model_update_schedule": "native LBF counter += 250 per policy update; VAE every 2000 counter units",
                 "budget_policy": "complete the first episode batch reaching the target; overshoot < batch_size_run * max_steps",
                 "evaluation_schedule": "nominal thresholds shared with MAPPO; actual evaluation steps recorded separately",
+                "learner_correction": TARGET_SYNC_FIX,
                 "cli": {k: str(v) if isinstance(v, Path) else v for k, v in vars(cli).items()}}
     recorder = ExperimentRecorder(output, None, metadata, sources=sources)
     logger = LearnerLogger()
     envs = [SMACAdapter(config=config) for _ in range(settings["batch_size_run"])]
     backend = build(root, settings, envs[0].get_env_info(), logger)
+    write_json(output / "network.json", network_configuration(backend))
     policy = EvaluationPolicy(backend)
     eval_args = SimpleNamespace(algorithm_name="smpe", seed=cli.seed, recurrent_N=1, hidden_size=backend.args.hidden_dim)
     print(json.dumps({"output": str(output), "device": cli.device, "env_info": envs[0].get_env_info(),
@@ -105,21 +118,23 @@ def main():
             return
         initial = snapshot(backend)
         checkpoint(output / "models/initial.pt", backend, config, 0)
-        before = score("before", cli.eval_episodes, cli.eval_seed, False, True)
+        before = None if cli.greedy_validation_only else score("before", cli.eval_episodes, cli.eval_seed, False, True)
         before_greedy = score("before_greedy", cli.eval_episodes, cli.eval_seed, True)
-        recorder.evaluation(0, before, False)
+        if before is not None:
+            recorder.evaluation(0, before, False)
         recorder.evaluation(0, before_greedy, True)
         recorder.log(0, {"test_actual_environment_steps": 0})
         best_score, best_step = (before_greedy["win_rate"], before_greedy["mean_return"]), 0
         checkpoint(output / "models/best.pt", backend, config, 0)
         heldout_before = {}
-        if cli.heldout_episodes:
+        if cli.heldout_episodes and not cli.skip_initial_heldout:
             for mode, deterministic in (("sampled", False), ("greedy", True)):
                 heldout_before[mode] = score("heldout_before_" + mode, cli.heldout_episodes, cli.heldout_seed, deterministic)
 
         def validation(scheduled_step, actual_step, sampled, greedy):
             nonlocal best_score, best_step
-            recorder.evaluation(scheduled_step, sampled, False)
+            if sampled is not None:
+                recorder.evaluation(scheduled_step, sampled, False)
             recorder.evaluation(scheduled_step, greedy, True)
             recorder.log(scheduled_step, {"test_actual_environment_steps": actual_step})
             rank = (greedy["win_rate"], greedy["mean_return"])
@@ -128,20 +143,24 @@ def main():
                 checkpoint(output / "models/best.pt", backend, config, actual_step)
 
         recent = deque(maxlen=32)
-        reset_random = np.random.default_rng(cli.seed)
+        reset_random = (EpisodeSeedSequence(cli.seed) if cli.environment_seed_mode == "episode-index"
+                        else np.random.default_rng(cli.seed))
         steps = episodes = updates = model_updates = 0
         next_eval, next_save, next_log = cli.eval_interval, cli.save_interval, cli.log_interval
         start = time.perf_counter()
         with (output / "metrics.jsonl").open("w", buffering=1) as log, \
-                (output / "training_episodes.jsonl").open("w", buffering=1) as episode_log:
+                open_episode_log(output, cli.compact_episode_log) as episode_log:
             while steps < cli.steps:
                 batch, collected, rows = collect(backend, envs, steps, reset_random)
                 steps += collected
                 for row in rows:
                     episodes += 1
+                    if cli.environment_seed_mode == "episode-index":
+                        row["environment_episode_index"] = row["seed"] - reset_random.base
                     row.update(episode=episodes, environment_steps=steps)
                     episode_log.write(json.dumps(row, allow_nan=False) + "\n")
                     recent.append(row)
+                episode_log.flush()
                 backend.buffer.insert_episode_batch(batch)
                 backend.vae.addBatch(batch)
                 backend.vae.update_stats(batch)
@@ -167,6 +186,7 @@ def main():
                 backend.learner.train(sample, steps, episodes, rewards)
                 assert_finite(backend)
                 row = {"seed": cli.seed, "update": updates, "model_updates": model_updates,
+                       "filtered_target_updates": backend.learner.filtered_target_updates,
                        "environment_steps": steps, "episodes": episodes,
                        "recent_return": float(np.mean([item["return"] for item in recent])),
                        "recent_win_rate": sum(item["winner"] == "red" for item in recent) / len(recent),
@@ -178,6 +198,7 @@ def main():
                     recorder.log(steps, {"return_mean": row["recent_return"], "battle_won_mean": row["recent_win_rate"],
                                         "timeout_mean": row["recent_timeout_rate"], "episode": episodes,
                                         "model_updates": model_updates, "intrinsic_reward_mean": intrinsic_mean,
+                                        "filtered_target_updates": backend.learner.filtered_target_updates,
                                         **logger.values})
                     print(json.dumps(row, allow_nan=False), flush=True)
                     next_log = (steps // cli.log_interval + 1) * cli.log_interval
@@ -186,12 +207,15 @@ def main():
                     checkpoint(output / "models" / f"step_{steps:08d}.pt", backend, config, steps)
                     next_save = (steps // cli.save_interval + 1) * cli.save_interval
                 while cli.eval_interval and steps >= next_eval and next_eval < cli.steps:
-                    sampled = score("step_" + str(next_eval) + "_sampled", cli.eval_episodes, cli.eval_seed, False)
+                    sampled = None if cli.greedy_validation_only else score("step_" + str(next_eval) + "_sampled", cli.eval_episodes, cli.eval_seed, False)
                     greedy = score("step_" + str(next_eval) + "_greedy", cli.eval_episodes, cli.eval_seed, True)
                     validation(next_eval, steps, sampled, greedy)
                     next_eval += cli.eval_interval
         elapsed = time.perf_counter() - start
         deltas = parameter_deltas(backend, initial)
+        target_updates = backend.learner.filtered_target_updates
+        if target_updates and deltas["target_critic_w"] <= 0:
+            raise RuntimeError("SMPE filtered target critic did not change after synchronization")
         for name in ("actor", "critic", "critic_w") + (("agent_models", "filters") if model_updates else ()):
             if deltas[name] <= 0:
                 raise RuntimeError("SMPE component did not update: " + name)
@@ -206,7 +230,7 @@ def main():
                               and float(stats.count) == expected_stats[name][2] for name, stats in running_stats(backend).items())
         if not equal:
             raise RuntimeError("SMPE checkpoint round trip changed policy or normalization state")
-        after = score("after", cli.eval_episodes, cli.eval_seed, False, True)
+        after = None if cli.greedy_validation_only else score("after", cli.eval_episodes, cli.eval_seed, False, True)
         greedy = score("greedy", cli.eval_episodes, cli.eval_seed, True, True)
         validation(cli.steps, steps, after, greedy)
         heldout = {}
@@ -221,6 +245,7 @@ def main():
                    "updates": updates, "model_updates": model_updates, "training_episodes": episodes,
                    "training_seconds": elapsed, "environment_steps_per_second": steps / elapsed,
                    "parameter_deltas_l2": deltas, "checkpoint_reload_equal": equal, "invalid_red_actions": 0,
+                   "learner_correction": TARGET_SYNC_FIX, "filtered_target_updates": target_updates,
                    "best_validation_step": best_step, "best_validation_score": best_score,
                    "before": before, "after": after, "greedy": greedy,
                    "heldout_before": heldout_before, "heldout": heldout}

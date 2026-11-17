@@ -1,5 +1,7 @@
 # SMPE
 
+15 配置、三个 seed 的通信/规模/角色配比实验见 [统一实验协议](../common/COMM_SCALE_ROSTER.md)，由共享 CPU/GPU 队列与 EPyMARL MAPPO 并行运行，输出分别管理。
+
 本接入使用外部 SMPE 仓库的 `BasicMAC`、`ActorCriticVLearner`、`VAEController`、`EpisodeBatch` 和 `ReplayBuffer`。保留原始策略梯度、状态 VAE、过滤器、哈希探索奖励和模型训练过程，不用 MAPPO 替代 SMPE，也不复制外部网络实现。
 
 命令均从 HeteroGrid 项目根目录执行。
@@ -26,7 +28,9 @@ HeteroGrid 的全局状态不是局部观测的拼接，因此内部设置 `env=
 
 评分后的超时按有限时域终局处理，设置 `add_value_last_step=False`，不跨终局 bootstrap。死亡槽位只允许等待动作，策略遵守环境动作掩码。内在奖励只供训练使用，训练对局回报、验证和测试回报均单独统计环境奖励。
 
-关闭原仓库 VAE 的共享路径自动存盘，改由接入层统一保存完整模型。未改写或修正外部 learner 的内部更新公式；具体源码版本以实验的 `_code/` 和 `_sources/` 为准，不将本接入等同于论文全部实验的复现。
+关闭原仓库 VAE 的共享路径自动存盘，改由接入层统一保存完整模型。接入层的 `TargetSyncActorCriticVLearner` 补齐原始 learner 遗漏的 `target_critic_w` 同步：硬更新复制过滤 critic，软更新使用与普通目标 critic 相同的系数和触发时机。策略梯度、价值目标、VAE 与探索奖励公式不变，外部仓库和历史实验快照不改动。
+
+修复后的运行在 `config.json` 和 `summary.json` 中记录 `learner_correction=filtered-critic-target-sync-v1`，并保存过滤目标更新次数及参数变化。`network.json` 保存实际网络结构、输入输出维度和参数量。旧检查点仍可加载评估，但其权重不会被自动修改，不能视为修复后重训结果。具体源码版本以实验的 `_code/` 和 `_sources/` 为准，不将本接入等同于论文全部实验的复现。
 
 ## 单种子训练
 
@@ -44,6 +48,10 @@ python -m algorithms.smpe.train \
 
 ## 复用 MAPPO 实验矩阵
 
+若只研究红方通信、固定蓝方通信，请使用[固定蓝方通信实验](../common/COMMUNICATION.md)的联合入口。该入口会重新训练新独立通信实现下的 B0，而不是复用旧矩阵的基准。
+
+密度受控的 D0–D3 规模实验使用[独立 D 组入口](../common/DENSITY.md)，开启参考奖励归一化及双方诊断，并无损压缩逐局日志。
+
 ```bash
 python -m algorithms.smpe.matrix \
   --reference output/mappo/sensitivity_5m \
@@ -51,7 +59,34 @@ python -m algorithms.smpe.matrix \
   --output output/smpe/sensitivity_5m
 ```
 
-参考实验必须是已完成的 13 配置 MAPPO 敏感性实验。默认直接继承其三个种子、5M 对齐预算、验证与独立测试种子、评估局数、评估和模型保存间隔，不重新生成近似的环境配置。启动前会校验环境核心源码与参考实验一致。
+参考实验支持已完成的 13 配置 MAPPO/SMPE 敏感性实验，或已完成的 MAPPO/SMPE 四配置 D 组。默认直接继承其三个种子、5M 对齐预算、验证与独立测试种子、评估局数、评估和模型保存间隔，不重新生成近似的环境配置。启动前会校验环境核心源码与参考实验一致。
+
+对 D 组单独重跑修复后的 SMPE：
+
+```bash
+python -m algorithms.smpe.matrix \
+  --reference output/smpe/<原D组实验> \
+  --smpe-root "$SMPE_ROOT" --workers 12 --replay-episodes 1 \
+  --output output/smpe/<新的修复验证实验>
+```
+
+可用 `--conditions D0_baseline D3_12v12` 选择参考实验的子集。D 组保持参考奖励归一化及双方诊断，训练逐局记录自动无损压缩。验证修复影响时应保持原网络和超参数，从头训练，不同时扩大网络或更改探索奖励。
+
+补齐 B/C/M/N 时，可以组合两个来源，避免重新运行旧版同时干扰蓝方的通信对照：
+
+```bash
+python -m algorithms.smpe.matrix \
+  --reference output/smpe/<原sensitivity实验> \
+  --communication-reference output/smpe/<原blue_fixed实验> \
+  --allow-compatible-environment --compact-episode-log \
+  --external-status output/smpe/<正在运行的D组>/status.json \
+  --workers 12 --save-interval 5000192 --replay-episodes 1 \
+  --output output/smpe/<新的BCMN修复实验>
+```
+
+B0、C1–C6 使用固定蓝方来源，M1–M3、N1–N3 保留 sensitivity 配置及旧随机流语义。环境源码变化时，`--allow-compatible-environment` 会先逐帧复算各配置的一局历史测试回放，检查状态、奖励和终局；结果记录在清单中，不表示穷尽验证所有状态。默认仍要求源码严格一致。
+
+`--external-status` 只接受已没有排队任务的实验；新增队列扣除其存活训练进程数，和它共享 `--workers` 总上限。该选项适合一个补充队列接续已有实验，不用于多个彼此不协调的新队列。上例不额外保留中间步数快照，只保留初始、验证最优和最终模型。
 
 管理器通过 `nohup` 后台运行，退出终端不影响实验。`--workers` 控制并发数；较大队伍优先启动，其余任务自动排队。正式训练从头初始化，不复用 MAPPO 或短检查权重。
 

@@ -21,6 +21,24 @@ def jobs_for(manifest, output):
     return sorted(jobs, key=lambda job: -sizes.get(job["condition"], 6))
 
 
+def external_running_workers(paths):
+    pids = set()
+    for path in paths:
+        status = json.loads(Path(path).read_text())
+        for row in status.get("runs", {}).values():
+            if row.get("state") != "RUNNING":
+                continue
+            pid = int(row["pid"])
+            if pid <= 0:
+                raise ValueError("Invalid worker PID in external experiment")
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            pids.add(pid)
+    return len(pids)
+
+
 def run_queue(output, training_command, audit, summarize):
     import fcntl
     lock = (output / "manager.lock").open("a")
@@ -63,7 +81,10 @@ def run_queue(output, training_command, audit, summarize):
                     print(json.dumps({"event": "finished", "job": key, "return_code": code}), flush=True)
             if shutil.disk_usage(output).free < manifest["minimum_free_disk_bytes"]:
                 raise RuntimeError("Disk safety threshold reached; stopping workers to protect experiment records")
-            while jobs and len(active) < manifest["workers"]:
+            reserved = external_running_workers(manifest.get("external_status_paths", []))
+            status["external_running_workers"] = reserved
+            available = max(0, manifest["workers"] - reserved)
+            while jobs and len(active) < available:
                 job = jobs.pop(0)
                 row = status["runs"][job["id"]]
                 command = training_command(manifest, output, job)

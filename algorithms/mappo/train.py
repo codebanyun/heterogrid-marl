@@ -16,6 +16,7 @@ import torch
 from heterogrid import EnvConfig, SMACAdapter
 from heterogrid.core import REWARD_COMPONENTS
 from algorithms.common.evaluation import evaluate, observe, write_json
+from algorithms.common.episode_log import open_episode_log, recent_buffer
 from algorithms.common.experiment_log import ExperimentRecorder
 from algorithms.mappo.settings import DEFAULT_CONFIG, PROJECT_ROOT, add_backend_argument, validate_backend
 
@@ -65,6 +66,7 @@ def main():
     parser.add_argument("--trajectory-interval", type=int, default=0, help="Save sampled rollouts at this interval; 0 saves every rollout")
     parser.add_argument("--no-trajectories", action="store_true", help="Do not retain training rollout arrays")
     parser.add_argument("--no-evaluation-files", action="store_true", help="Keep periodic evaluation metrics without separate directories")
+    parser.add_argument("--compact-episode-log", action="store_true", help="Stream lossless gzip episode records without retaining a duplicate array")
     parser.add_argument("--log-interval", type=int, default=0, help="Export metric series at this interval; 0 exports every rollout")
     parser.add_argument("--replay-episodes", type=int, help="Maximum full replays per final evaluation group; all episodes are scored")
     parser.add_argument("--heldout-episodes", type=int, default=0)
@@ -229,14 +231,15 @@ def main():
     updates = cli.steps // (cli.num_envs * cli.rollout_length)
     episode_returns = np.zeros(cli.num_envs)
     episode_components = {k: np.zeros(cli.num_envs) for k in REWARD_COMPONENTS}
-    episodes = []
+    episodes = recent_buffer(cli.compact_episode_log)
+    episode_count = 0
     invalid_red_actions = 0
     saved_rollouts = 0
     start = time.perf_counter()
     metrics_path = output / "metrics.jsonl"
     try:
         with metrics_path.open("w", encoding="utf-8") as metrics, \
-                (output / "training_episodes.jsonl").open("w", encoding="utf-8") as episode_log:
+                open_episode_log(output, cli.compact_episode_log) as episode_log:
             for update in range(1, updates + 1):
                 trainer.prep_rollout()
                 terminal_flags = np.zeros((cli.rollout_length, cli.num_envs), dtype=bool)
@@ -271,6 +274,7 @@ def main():
                             if "team_episode_metrics" in info:
                                 row["team_episode_metrics"] = info["team_episode_metrics"]
                             episodes.append(row)
+                            episode_count += 1
                             episode_log.write(json.dumps(row, allow_nan=False) + "\n")
                             episode_returns[i] = 0
                             for key in REWARD_COMPONENTS:
@@ -306,8 +310,8 @@ def main():
                         action_log_probs=buffer.action_log_probs, environment_done=terminal_flags,
                         **{f"reward_{k}": v for k, v in reward_components.items()})
                     saved_rollouts += 1
-                recent = episodes[-32:]
-                row = {"seed": cli.seed, "update": update, "environment_steps": total_steps, "episodes": len(episodes),
+                recent = list(episodes)[-32:] if cli.compact_episode_log else episodes[-32:]
+                row = {"seed": cli.seed, "update": update, "environment_steps": total_steps, "episodes": episode_count,
                        "recent_return": float(np.mean([r["return"] for r in recent])) if recent else None,
                        "recent_win_rate": sum(r["winner"] == "red" for r in recent) / len(recent) if recent else None,
                        "recent_timeout_rate": sum(r["reason"] == "timeout" for r in recent) / len(recent) if recent else None,
@@ -318,7 +322,7 @@ def main():
                 metrics.flush()
                 log_due = not cli.log_interval or total_steps % cli.log_interval == 0 or update in (1, updates)
                 if log_due:
-                    recorder.log(total_steps, {"episode": len(episodes), "return_mean": row["recent_return"],
+                    recorder.log(total_steps, {"episode": episode_count, "return_mean": row["recent_return"],
                         "battle_won_mean": row["recent_win_rate"], "timeout_mean": row["recent_timeout_rate"],
                         "ep_length_mean": float(np.mean([r["length"] for r in recent])) if recent else None,
                         "combat_zero_reward_fraction": row["combat_zero_reward_fraction"], **losses})
@@ -365,7 +369,7 @@ def main():
                 heldout[label][mode] = final_evaluation(output / "replays" / ("heldout_" + label + "_" + mode),
                                                       cli.heldout_episodes, cli.heldout_seed, deterministic, reloaded)
     summary = {"algorithm": args.algorithm_name, "environment_steps": cli.steps, "updates": updates,
-               "training_episodes": len(episodes), "training_seconds": elapsed,
+               "training_episodes": episode_count, "training_seconds": elapsed,
                "environment_steps_per_second": cli.steps / elapsed,
                "actor_parameter_delta_l2": actor_delta, "critic_parameter_delta_l2": critic_delta,
                "checkpoint_reload_equal": reload_equal, "invalid_red_actions": invalid_red_actions,
@@ -374,7 +378,8 @@ def main():
                "best_validation_step": best_step, "best_validation_score": best_score,
                "heldout_before": heldout_before, "heldout": heldout}
     write_json(output / "summary.json", summary)
-    write_json(output / "training_episodes.json", episodes)
+    if not cli.compact_episode_log:
+        write_json(output / "training_episodes.json", episodes)
     print(json.dumps({k: v for k, v in summary.items() if k not in ("before", "after", "greedy", "heldout", "heldout_before")}), flush=True)
     recorder.complete({"environment_steps": cli.steps, "best_validation_step": best_step,
                        "final_validation_win_rate": greedy["win_rate"]})

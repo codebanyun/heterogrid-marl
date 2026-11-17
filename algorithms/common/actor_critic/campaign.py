@@ -7,7 +7,6 @@ import shutil
 import sys
 from pathlib import Path
 
-from algorithms.common.actor_critic.backend import algorithm_settings
 from algorithms.common.experiment_log import write_atomic
 from algorithms.common.sensitivity import PROJECT_ROOT, GROUPS, LABELS, scenarios, communication_protocol
 from algorithms.common.value_decomposition.campaign import now, supervise
@@ -15,6 +14,7 @@ from algorithms.common.value_decomposition.report import summarize
 
 
 def prepare(args):
+    from algorithms.common.actor_critic.backend import algorithm_settings
     coordinator = args.output_root / "campaigns" / (args.name + "_maa2c_coma")
     if coordinator.exists():
         raise FileExistsError("Campaign already exists: " + str(coordinator))

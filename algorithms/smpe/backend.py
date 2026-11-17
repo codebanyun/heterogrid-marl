@@ -1,4 +1,4 @@
-"""Episode collection and complete artifacts around the unchanged SMPE learner."""
+"""Native SMPE collection and artifacts with the filtered-target sync correction."""
 import logging
 import sys
 from pathlib import Path
@@ -30,7 +30,7 @@ def build(root, settings, env_info, logger):
     from components.episode_buffer import EpisodeBatch, ReplayBuffer
     from components.transforms import OneHot
     from controllers.basic_controller import BasicMAC
-    from learners.actor_critic_learner import ActorCriticVLearner
+    from algorithms.smpe.learner import TargetSyncActorCriticVLearner
     from model_learners.vae_controller import VAEController
 
     args = SimpleNamespace(**settings)
@@ -47,11 +47,35 @@ def build(root, settings, env_info, logger):
                           preprocess=preprocess, device="cpu")
     vae = VAEController(buffer.scheme, args)
     mac = BasicMAC(buffer.scheme, groups, args, vae)
-    learner = ActorCriticVLearner(mac, buffer.scheme, logger, args)
+    learner = TargetSyncActorCriticVLearner(mac, buffer.scheme, logger, args)
     if args.use_cuda:
         learner.cuda()
     return SimpleNamespace(args=args, scheme=scheme, groups=groups, preprocess=preprocess,
                            EpisodeBatch=EpisodeBatch, buffer=buffer, mac=mac, vae=vae, learner=learner)
+
+
+def network_configuration(backend):
+    args, mac, learner = backend.args, backend.mac, backend.learner
+    obs = backend.scheme["obs"]["vshape"]
+    actor_input = obs + (args.latent_dim if args.use_dynamics and args.use_z_inputs else 0)
+    actor_input += args.n_actions if args.obs_last_action else 0
+    actor_input += args.n_agents if args.obs_agent_id else 0
+    if mac.agent.fc1.in_features != actor_input or mac.agent.fc2.out_features != args.n_actions:
+        raise ValueError("SMPE actor dimensions do not match local observation inputs")
+    critic_input = args.state_dim + args.n_agents
+    if any(module.fc1.in_features != critic_input for module in (learner.critic, learner.critic_w)):
+        raise ValueError("SMPE critics must receive the structured state and agent ID")
+    if backend.vae.target_state_dim != args.state_dim:
+        raise ValueError("SMPE VAE must model the structured global state")
+    if len(backend.vae.agent_models) != args.n_agents or len(backend.vae.filters) != args.n_agents:
+        raise ValueError("SMPE must have one state model and filter per agent")
+    return {"actor_input": actor_input, "local_observation_size": obs, "critic_input": critic_input,
+            "state_size": args.state_dim, "n_agents": args.n_agents, "n_actions": args.n_actions,
+            "hidden_dim": args.hidden_dim, "latent_dim": args.latent_dim, "use_rnn": args.use_rnn,
+            "actor_uses_global_state": False, "target_update_tau_or_interval": args.target_update_interval_or_tau,
+            "modules": {name: {"architecture": str(module),
+                               "parameters": sum(p.numel() for p in module.parameters())}
+                        for name, module in modules(backend).items()}}
 
 
 def new_batch(backend, size, length):
@@ -68,10 +92,11 @@ def transition_data(envs):
 
 @torch.no_grad()
 def collect(backend, envs, t_env, random):
+    from algorithms.common.training_seeds import episode_seeds
     batch = new_batch(backend, len(envs), envs[0].episode_limit + 1)
     # Padded slots must have a defined categorical distribution, but are never executed.
     batch["avail_actions"][..., 0] = 1
-    seeds = [int(random.integers(0, 2 ** 31 - 1)) for _ in envs]
+    seeds = episode_seeds(random, len(envs))
     for env, seed in zip(envs, seeds):
         env.reset(seed=seed)
     batch.update(transition_data(envs), ts=0)
@@ -104,10 +129,12 @@ def collect(backend, envs, t_env, random):
             terminations.append([done[index]])
             steps += 1
             if done[index]:
-                rows.append({"seed": seeds[index], "return": totals[index], "length": time + 1,
-                             "winner": info["winner"], "reason": info["termination_reason"],
-                             "invalid_red_actions": invalid, "reward_components": components[index],
-                             **info["episode_metrics"]})
+                row = {"seed": seeds[index], "return": totals[index], "length": time + 1,
+                       "winner": info["winner"], "reason": info["termination_reason"],
+                       "invalid_red_actions": invalid, "reward_components": components[index], **info["episode_metrics"]}
+                if "team_episode_metrics" in info:
+                    row["team_episode_metrics"] = info["team_episode_metrics"]
+                rows.append(row)
         batch.update({"reward": rewards, "terminated": terminations}, bs=active, ts=time, mark_filled=False)
         batch.update(transition_data([envs[index] for index in active]), bs=active, ts=time + 1)
         if all(done):
@@ -169,6 +196,7 @@ def assert_finite(backend):
 
 
 def checkpoint(path, backend, config, steps):
+    from algorithms.smpe.settings import TARGET_SYNC_FIX
     learner, vae = backend.learner, backend.vae
     optimizers = {"actor": learner.agent_optimiser.state_dict(), "critic": learner.critic_optimiser.state_dict(),
                   "critic_w": learner.critic_optimiser_w.state_dict(),
@@ -178,13 +206,15 @@ def checkpoint(path, backend, config, steps):
                        "projection_matrix": torch.from_numpy(hasher.projection_matrix.copy())} for hasher in hashers]
                 for name, hashers in (("obs", vae.hash_obs), ("z", vae.hash_z))}
     value = {"schema_version": 1, "algorithm": "smpe", "environment_steps": steps,
+             "learner_correction": TARGET_SYNC_FIX,
              "env_config": config.to_dict(), "smpe_args": vars(backend.args),
              "modules": {name: module.state_dict() for name, module in modules(backend).items()},
              "normalizers": {name: {"mean": stats.mean, "var": stats.var, "count": float(stats.count)}
                              for name, stats in running_stats(backend).items()},
              "optimizers": optimizers, "hash_counts": counters,
              "learner_counters": {name: getattr(learner, name) for name in
-                                  ("last_target_update_step", "critic_training_steps", "log_stats_t")}}
+                                  ("last_target_update_step", "critic_training_steps", "log_stats_t",
+                                   "filtered_target_updates")}}
     path = Path(path)
     temporary = path.with_suffix(".pt.tmp")
     torch.save(value, temporary)
@@ -203,4 +233,6 @@ def restore(path, backend):
         for hasher, state in zip(hashers, saved["hash_counts"][name]):
             hasher.tables = state["tables"].cpu().numpy().copy()
             hasher.projection_matrix = state["projection_matrix"].cpu().numpy().copy()
+    for name, value in saved.get("learner_counters", {}).items():
+        setattr(backend.learner, name, value)
     return saved

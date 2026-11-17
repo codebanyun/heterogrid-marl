@@ -6,6 +6,8 @@
 
 - `common/`：公共记录、评估、审计、队列和多种子汇总，不放环境规则或某个算法的网络结构。
 - `mappo/`：[MAPPO 与 R-MAPPO 使用说明](mappo/README.md)。
+- `epymarl_mappo/`：[EPyMARL 原生 MAPPO 与独立 B/C/M/N/D 实验](epymarl_mappo/README.md)，不混用原 MAPPO 的实现或输出目录。
+- `ma2e/`：[QMIX + MA2E 接入与 B/C/M/N/D 实验](ma2e/README.md)，支持 GPU 优先、CPU 回退和独立结果目录。
 - `smpe/`：[SMPE 使用说明](smpe/README.md)，复用外部仓库的循环策略、状态模型和内在探索奖励。
 - `qmix/`：[QMIX 接入、后台任务矩阵与结果说明](qmix/README.md)。
 - `qtran/`：[QTRAN-base 接入说明](qtran/README.md)。
@@ -25,6 +27,10 @@
 环境规则留在 `heterogrid/`，算法特有的观测转换、RNN 状态和训练流程留在算法子目录。禁止把全局状态、隐藏坐标或诊断快照泄漏给执行 actor。
 
 ## 实验约定
+
+仅改变红方通信、固定蓝方策略与通信时，使用[固定蓝方通信实验入口](common/COMMUNICATION.md)。该入口联合调度 MAPPO 与 SMPE，并重跑新独立通信随机流下的 B0，不与旧基准混合。
+
+控制空间密度及伤害、击杀奖励尺度的规模实验，使用[MAPPO 与 SMPE 的 D 组入口](common/DENSITY.md)，包含 D0–D3 和双方诊断。
 
 1. 配置按任务命名，使用 `configs/` 中共享场景；优化器、网络和训练预算由算法入口管理。
 2. 默认输出到 `output/<算法名>/<实验名>/`，多种子实验再分 `seed_<种子>/`。输出目录必须是新目录，避免覆盖。

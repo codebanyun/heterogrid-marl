@@ -10,10 +10,15 @@
 | `environment/test_team_communication.py` | 红蓝独立通信、距离叠加失联、蓝方随机流隔离、自动/手动共享、旧采样兼容与空间维度 | 环境核心依赖 |
 | `environment/test_scaling.py` | 初始阵容奖励归一化、非对称/自定义HP、密度场景生成、双方攻击与协作诊断、RNG和策略信息边界不变 | 环境核心依赖 |
 | `integrations/mappo/` | MAPPO 入口、预算对齐、进度读取、路径配置、缓存观测与死亡掩码 | 观测测试可选 PyTorch，其余不需要外部 MAPPO 源码 |
+| `integrations/epymarl_mappo/` | 原生 MAPPO 参数、PPO 多轮更新与旧策略同步、终局和动作掩码、完整检查点、17 配置与 51 任务的独立路径 | 后端测试需 PyTorch 与 `EPYMARL_ROOT`；与其他外部后端分进程执行 |
+| `integrations/ma2e/` | 因果历史、自身信息边界、槽位、有效重建样本、缓存失效、检查点、GPU 租约、OOM 回退、运行进程接管与峰值内存准入 | 后端测试需 PyTorch 与 `MA2E_ROOT`；原生模块在隔离子进程测试 |
 | `integrations/test_value_decomposition.py` | QMIX/QTRAN任务矩阵、回放终局与补齐、目标RNN首帧对齐、缺失种子曲线处理 | RNN测试可选PyTorch，不需要外部算法源码 |
 | `integrations/test_actor_critic.py` | MAA2C/COMA固定参数、终局n-step、padding、执行与原MAC一致、COMA反事实输入、真实批量更新 | 可选PyTorch、PyYAML与EPyMARL源码，`EPYMARL_ROOT`指向其src目录 |
-| `integrations/smpe/` | 冻结配置、源码隔离、原生模型更新、终局处理、动作掩码和完整检查点 | 矩阵测试只需核心依赖；后端测试需 PyTorch，并用 `SMPE_ROOT` 指定外部仓库 |
+| `integrations/smpe/` | 冻结配置、源码隔离、模型更新、过滤目标 critic 硬/软同步与触发间隔、D 组网络维度、终局处理、动作掩码和完整检查点 | 矩阵测试只需核心依赖；后端测试需 PyTorch，并用 `SMPE_ROOT` 指定外部仓库 |
 | `common/` | 日志、指标、源码快照、可选结果索引和运行状态 | 环境核心依赖 |
+| `common/test_compact_results.py` | 完成状态与活动进程保护、仅保留最佳和最终模型、回放精简、逐局日志无损压缩及失败时保留原件 | Python 标准库；仅使用临时目录，不接触实际实验 |
+| `common/test_communication_study.py` | 固定蓝方、仅改变红方、独立随机流、新 B0、两个算法共享队列和冻结源码 | 核心依赖；队列启动用 mock，不启动长期训练 |
+| `common/test_density_study.py`、`test_episode_log.py` | D0–D3 的密度与奖励协议、队列顺序、双方诊断的有效样本数、无损压缩与近期窗口 | 核心依赖；不启动长期训练 |
 | `viewer/` | HTTP 控制、快照只读、配置原子性；另有可选浏览器检查 | Python 测试无前端依赖，浏览器检查需 Node.js 与 Playwright |
 
 ## Python 回归
@@ -28,6 +33,14 @@ python -m unittest discover -s tests/viewer -t . -v
 ```
 
 不需要安装 pytest。PettingZoo 对包含动作掩码的 Dict 观测可能给出提示，只要断言通过就不是测试失败。单元测试不会启动长期训练。
+
+SMPE 后端检查可单独执行：
+
+```bash
+SMPE_ROOT=/path/to/smpe_raw python -m unittest tests.integrations.smpe.test_backend -v
+```
+
+不同外部算法仓库可能包含同名顶层 Python 包，应在独立进程中分别执行后端测试。
 
 ## 可选浏览器检查
 
